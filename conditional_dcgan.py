@@ -116,7 +116,7 @@ if __name__ == '__main__':
         batch_size=args.batch_size)
 
     model_d = ModelD()
-    model_g = ModelG(args.nz)
+    model_g = ModelG(args.nz) # noise dimension
     criterion = nn.BCELoss()
     input = torch.FloatTensor(args.batch_size, INPUT_SIZE)
     noise = torch.FloatTensor(args.batch_size, (args.nz))
@@ -148,7 +148,6 @@ if __name__ == '__main__':
     for epoch_idx in range(args.epochs):
         model_d.train()
         model_g.train()
-            
 
         d_loss = 0.0
         g_loss = 0.0
@@ -168,7 +167,7 @@ if __name__ == '__main__':
 
             output = model_d(inputv, Variable(one_hot_labels))
             optim_d.zero_grad()
-            errD_real = criterion(output, labelv)
+            errD_real = criterion(output, labelv) # labelv: all one vector
             errD_real.backward()
             realD_mean = output.data.cpu().mean()
             
@@ -183,7 +182,7 @@ if __name__ == '__main__':
             onehotv = Variable(one_hot_labels)
             g_out = model_g(noisev, onehotv)
             output = model_d(g_out, onehotv)
-            errD_fake = criterion(output, labelv)
+            errD_fake = criterion(output, labelv) # labelv: all zero vector
             fakeD_mean = output.data.cpu().mean()
             errD = errD_real + errD_fake
             errD_fake.backward()
@@ -198,9 +197,10 @@ if __name__ == '__main__':
             label.resize_(batch_size).fill_(real_label)
             onehotv = Variable(one_hot_labels)
             noisev = Variable(noise)
-            labelv = Variable(label)
+            labelv = Variable(label) # labelv: all one vector
             g_out = model_g(noisev, onehotv)
             output = model_d(g_out, onehotv)
+            # labelv: all one vector
             errG = criterion(output, labelv)
             optim_g.zero_grad()
             errG.backward()
