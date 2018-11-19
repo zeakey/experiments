@@ -1,5 +1,10 @@
 Extra code added to generated html:
 
+In head:
+```
+<link rel="shortcut icon" href="http://static.kaiz.xyz/icon/k-icon.png">
+```
+
 In style:
 ```
 .back-home {
