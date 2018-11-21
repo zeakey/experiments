@@ -40,7 +40,7 @@ parser.add_argument('--print-freq', '-p', default=10, type=int,
                     metavar='N', help='print frequency (default: 10)')
 parser.add_argument('--resume', default='', type=str, metavar='PATH',
                     help='path to latest checkpoint (default: none)')
-parser.add_argument('--checkpoint', default='places2subset', type=str, metavar='PATH',
+parser.add_argument('--checkpoint', default='checkpoint', type=str, metavar='PATH',
                     help='checkpoint path (default: checkpoint)')
 parser.add_argument('-e', '--evaluate', dest='evaluate', action='store_true',
                     help='evaluate model on validation set')
@@ -89,27 +89,20 @@ def main():
     model = resnet_affine.resnet18()
     model.cuda()
     print(model)
+    print("================================================================================")
     log.flush()
 
     criterion = nn.CrossEntropyLoss().cuda()
-    
-    if True:
-        others = []
-        rnn = []
-        for name, p in model.named_parameters():
-            if 'rnn' in name:
-                rnn.append(p)
-                # print(name, 'fc')
-            else:
-                others.append(p)
-        optimizer = torch.optim.SGD([{"params": others, "lr": args.lr},
-                                     {"params": rnn, "lr": 0}], args.lr,
-                                    weight_decay=args.weight_decay)
-    else:
-        optimizer = torch.optim.SGD(model.parameters(), args.lr,
-                                weight_decay=args.weight_decay)
+    print("Model parameters:")
+    for name, p in model.named_parameters():
+        print("{:<35} {:<35}".format(
+            name,
+            str(p.shape)
+        ))
+    print("================================================================================")
+    optimizer = torch.optim.SGD(model.parameters(), args.lr, weight_decay=args.weight_decay)
     scheduler = lr_scheduler.StepLR(optimizer, step_size=args.stepsize, gamma=args.gamma)
-    
+
     # optionally resume from a checkpoint
     if args.resume:
         if isfile(args.resume):
