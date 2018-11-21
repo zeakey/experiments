@@ -8,6 +8,7 @@ import numpy as np
 from PIL import Image
 from scipy.io import savemat
 import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import os, sys, argparse, time, shutil
 from os.path import join, split, abspath, isdir, isfile, dirname
@@ -15,7 +16,6 @@ from utils import save_checkpoint, AverageMeter, accuracy
 import pytools, cv2
 from utils import save_checkpoint, Logger, ilsvrc2012, cifar10, cifar100
 import models
-from sklearn.metrics import confusion_matrix
 
 parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
 parser.add_argument('--model', metavar='STR', default="resnet18",
@@ -44,8 +44,8 @@ parser.add_argument('--checkpoint', default='checkpoint', type=str, metavar='PAT
                     help='checkpoint path (default: checkpoint)')
 parser.add_argument('-e', '--evaluate', dest='evaluate', action='store_true',
                     help='evaluate model on validation set')
-parser.add_argument('--pretrained', dest='pretrained', action='store_true',
-                    help='use pre-trained model')
+parser.add_argument('--affine', dest='affine', action='store_true',
+                    help='use affine transform')
 parser.add_argument('--tmp', help='tmp folder', default='tmp')
 parser.add_argument('--benchmark', dest='benchmark', action='store_true',
                     help='benchmark time')
@@ -86,8 +86,10 @@ def main():
 
     # model
     from models import resnet_affine, resnet
-    # model = resnet_affine.resnet18(num_classes=10)
-    model = resnet.resnet18(num_classes=10)
+    if args.affine:
+        model = resnet_affine.resnet18(num_classes=10)
+    else:
+        model = resnet.resnet18(num_classes=10)
 
     model.cuda()
     print(model)
@@ -102,7 +104,18 @@ def main():
             str(p.shape)
         ))
     print("================================================================================")
-    optimizer = torch.optim.SGD(model.parameters(), args.lr, weight_decay=args.weight_decay)
+    others = []
+    affine = []
+    for name, p in model.named_parameters():
+        if "affine" in name:
+            affine.append(p)
+            print(name)
+        else:
+            others.append(p)
+    optimizer = torch.optim.SGD([
+        {"params": affine, "lr": args.lr},
+        {"params": others, "lr": args.lr}],
+        args.lr, weight_decay=args.weight_decay)
     scheduler = lr_scheduler.MultiStepLR(optimizer, milestones=[80, 120], gamma=args.gamma)
 
     # optionally resume from a checkpoint
@@ -236,7 +249,6 @@ def train(train_loader, model, criterion, optimizer, epoch):
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
-
         # measure elapsed time
         batch_time.update(time.time() - end)
         end = time.time()
