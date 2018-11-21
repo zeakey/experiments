@@ -18,5 +18,5 @@ In style:
 
 In body:
 ```
-<a class="back-home" href='/'>Back to Home</a>
+<a class="back-home" href='http://kaiz.xyz'>Back to Home</a>
 ```
