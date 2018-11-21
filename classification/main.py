@@ -20,11 +20,11 @@ from sklearn.metrics import confusion_matrix
 parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
 parser.add_argument('--model', metavar='STR', default="resnet18",
                     help='model name (resnet18|squeezenet), default="resnet18"')
-parser.add_argument('--epochs', default=90, type=int, metavar='N',
+parser.add_argument('--epochs', default=180, type=int, metavar='N',
                     help='number of total epochs to run')
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                     help='manual epoch number (useful on restarts)')
-parser.add_argument('--bs', '--batch-size', default=512, type=int,
+parser.add_argument('--bs', '--batch-size', default=128, type=int,
                     metavar='N', help='mini-batch size (default: 256)')
 parser.add_argument('--lr', '--learning-rate', default=0.1, type=float,
                     metavar='LR', help='initial learning rate')
@@ -77,10 +77,10 @@ def main():
     ])
     
     trainset = torchvision.datasets.CIFAR10(root='~/.torch/data', train=True, download=True, transform=transform_train)
-    train_loader = torch.utils.data.DataLoader(trainset, batch_size=args.bs, shuffle=True, num_workers=2)
+    train_loader = torch.utils.data.DataLoader(trainset, batch_size=args.bs, shuffle=True, num_workers=8)
 
     valset = torchvision.datasets.CIFAR10(root='~/.torch/data', train=False, download=True, transform=transform_test)
-    val_loader = torch.utils.data.DataLoader(valset, batch_size=100, shuffle=False, num_workers=2)
+    val_loader = torch.utils.data.DataLoader(valset, batch_size=100, shuffle=False, num_workers=8)
     
     print("Data loading done, %.3f sec elapsed." % (time.time() - start))
 
@@ -103,7 +103,7 @@ def main():
         ))
     print("================================================================================")
     optimizer = torch.optim.SGD(model.parameters(), args.lr, weight_decay=args.weight_decay)
-    scheduler = lr_scheduler.StepLR(optimizer, step_size=args.stepsize, gamma=args.gamma)
+    scheduler = lr_scheduler.MultiStepLR(optimizer, milestones=[80, 120], gamma=args.gamma)
 
     # optionally resume from a checkpoint
     if args.resume:
@@ -168,6 +168,7 @@ def main():
         # train for one epoch
         loss_record += train(train_loader, model, criterion, optimizer, epoch)
         
+        # adjust learning rate
         scheduler.step()
 
         # evaluate on validation set
