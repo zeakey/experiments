@@ -117,8 +117,8 @@ def main():
         else:
             print("=> no checkpoint found at '{}'".format(args.resume))
     best_prec1 = 0
-    prec1s = []
-    prec5s = []
+    prec1_record = []
+    prec5_record = []
     loss_record = []
     if args.evaluate:
         # Others 0    Sports 1     Music 2 
@@ -170,8 +170,8 @@ def main():
 
         # evaluate on validation set
         prec1, prec5 = validate(val_loader, model, criterion)
-        prec1s.append(prec1)
-        prec5s.append(prec5)
+        prec1_record.append(prec1)
+        prec5_record.append(prec5)
 
         # remember best prec@1 and save checkpoint
         is_best = prec1 > best_prec1
@@ -184,15 +184,16 @@ def main():
             }, is_best, filename=join(args.checkpoint, 'checkpoint.pth'))
         if is_best:
             shutil.copyfile(join(args.checkpoint, 'checkpoint.pth'), join(args.checkpoint, 'model_best.pth'))
-        print("Evaluating done, best prec1@%.3f" % max(prec1s))
+        print("Evaluating done, best prec1@%.3f" % max(prec1_record))
         log.flush()
     loss_record = np.array(loss_record)
     _, axes = plt.subplots(1, 2)
-    axes[0].plot(prec1s, color='r', linewidth=2)
-    axes[0].plot(prec5s, color='g', linewidth=2)
-    axes[0].legend(['Top1 Accuracy (Best%.3f)' % max(prec1s), 'Top5 Accuracy (Best%.3f)' % max(prec5s)])
+    axes[0].plot(prec1_record, color='r', linewidth=2)
+    axes[0].plot(np.argmax(prec1_record), max(prec1_record), "*r", linewidth=8) # dot best acc
+    axes[0].plot(prec5_record, color='g', linewidth=2)
+    axes[0].plot(np.argmax(prec5_record), max(prec5_record), "*g", linewidth=8) # dot best acc
+    axes[0].legend(['Top1 Accuracy (Best%.3f)' % max(prec1_record), 'Top5 Accuracy (Best%.3f)' % max(prec5_record)])
     axes[0].grid(alpha=0.5, linestyle='dotted', linewidth=2, color='black')
-    axes[0].plot(np.argmax(prec1s), max(prec1s), "*r", linewidth=8) # dot best acc
 
     axes[1].plot(loss_record)
     axes[1].grid(alpha=0.5, linestyle='dotted', linewidth=2, color='black')
@@ -200,7 +201,7 @@ def main():
 
     plt.savefig(join(args.checkpoint, 'record.pdf'))
 
-    record = dict({'prec1': np.array(prec1s), 'prec5': np.array(prec5s), 'loss_record': np.array(loss_record)})
+    record = dict({'prec1': np.array(prec1_record), 'prec5': np.array(prec5_record), 'loss_record': np.array(loss_record)})
     savemat(join(args.checkpoint, 'precision.mat'), record)
 
 def train(train_loader, model, criterion, optimizer, epoch):
