@@ -24,7 +24,7 @@ parser.add_argument('--epochs', default=90, type=int, metavar='N',
                     help='number of total epochs to run')
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                     help='manual epoch number (useful on restarts)')
-parser.add_argument('--bs', '--batch-size', default=256, type=int,
+parser.add_argument('--bs', '--batch-size', default=512, type=int,
                     metavar='N', help='mini-batch size (default: 256)')
 parser.add_argument('--lr', '--learning-rate', default=0.1, type=float,
                     metavar='LR', help='initial learning rate')
@@ -77,7 +77,7 @@ def main():
     ])
     
     trainset = torchvision.datasets.CIFAR10(root='~/.torch/data', train=True, download=True, transform=transform_train)
-    train_loader = torch.utils.data.DataLoader(trainset, batch_size=128, shuffle=True, num_workers=2)
+    train_loader = torch.utils.data.DataLoader(trainset, batch_size=args.bs, shuffle=True, num_workers=2)
 
     valset = torchvision.datasets.CIFAR10(root='~/.torch/data', train=False, download=True, transform=transform_test)
     val_loader = torch.utils.data.DataLoader(valset, batch_size=100, shuffle=False, num_workers=2)
