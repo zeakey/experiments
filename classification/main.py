@@ -199,14 +199,14 @@ def main():
     axes[0].plot(prec5s, color='g', linewidth=2)
     axes[0].legend(['Top1 Accuracy (Best%.3f)' % max(prec1s), 'Top5 Accuracy (Best%.3f)' % max(prec5s)])
     axes[0].grid(alpha=0.5, linestyle='dotted', linewidth=2, color='black')
+    axes[0].plot(np.argmax(prec1s), max(prec1s), "*r", linewidth=8) # dot best acc
 
     axes[1].plot(loss_record)
     axes[1].grid(alpha=0.5, linestyle='dotted', linewidth=2, color='black')
     axes[1].legend(["Loss"])
-    
-    plt.plot(np.argmax(prec1s), max(prec1s), "*r", linewidth=8) # dot best acc
 
     plt.savefig(join(args.checkpoint, 'record.pdf'))
+
     record = dict({'prec1': np.array(prec1s), 'prec5': np.array(prec5s), 'loss_record': np.array(loss_record)})
     savemat(join(args.checkpoint, 'precision.mat'), record)
 
