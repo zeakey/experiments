@@ -9,6 +9,19 @@ def conv1x1(in_planes, out_planes, stride=1):
     return nn.Conv2d(in_planes, out_planes, kernel_size=1, stride=stride, bias=False)
 
 
+class Affine(nn.Module):
+
+    def __init__(self, H, W):
+        super(Affine, self).__init__()
+        self.H = H
+        self.W = W
+        self.weight = nn.Parameter(torch.eye(H*W), requires_grad=True)
+
+    def forward(self, x):
+        N, C, H, W = x.shape
+        assert H == self.H and W == self.W
+        return torch.mm(x.view(-1, self.H * self.W), self.weight).reshape(N, C, H, W)
+
 class BasicBlock(nn.Module):
     expansion = 1
 
@@ -18,7 +31,7 @@ class BasicBlock(nn.Module):
         self.input_shape = input_shape
 
         if self.affine:
-            self.affine_weight = torch.nn.Parameter(torch.eye(self.input_shape[2]*self.input_shape[3]))
+            self.affine = Affine(input_shape[2], input_shape[3])
 
         self.conv1 = conv3x3(inplanes, planes, stride)
         self.bn1 = nn.BatchNorm2d(planes)
@@ -43,7 +56,7 @@ class BasicBlock(nn.Module):
         
         if self.affine:
             assert residual.shape[2] == self.input_shape[2], "%d vs %d" % (residual.shape[2], self.input_shape[2])
-            torch.mm(residual.view(-1, self.input_shape[2]*self.input_shape[3]), self.affine_weight)
+            residual = self.affine(residual)
 
         out += residual
         out = self.relu(out)
