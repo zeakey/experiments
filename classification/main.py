@@ -85,8 +85,10 @@ def main():
     print("Data loading done, %.3f sec elapsed." % (time.time() - start))
 
     # model
-    from models import resnet_affine
-    model = resnet_affine.resnet18()
+    from models import resnet_affine, resnet
+    # model = resnet_affine.resnet18(num_classes=10)
+    model = resnet.resnet18(num_classes=10)
+
     model.cuda()
     print(model)
     print("================================================================================")

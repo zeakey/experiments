@@ -1,7 +1,24 @@
-import torch
 import torch.nn as nn
 import torch.utils.model_zoo as model_zoo
-from torchvision.models.resnet import __all__, model_urls, conv3x3
+
+
+__all__ = ['ResNet', 'resnet18', 'resnet34', 'resnet50', 'resnet101',
+           'resnet152']
+
+
+model_urls = {
+    'resnet18': 'https://download.pytorch.org/models/resnet18-5c106cde.pth',
+    'resnet34': 'https://download.pytorch.org/models/resnet34-333f7ec4.pth',
+    'resnet50': 'https://download.pytorch.org/models/resnet50-19c8e357.pth',
+    'resnet101': 'https://download.pytorch.org/models/resnet101-5d3b4d8f.pth',
+    'resnet152': 'https://download.pytorch.org/models/resnet152-b121ed2d.pth',
+}
+
+
+def conv3x3(in_planes, out_planes, stride=1):
+    """3x3 convolution with padding"""
+    return nn.Conv2d(in_planes, out_planes, kernel_size=3, stride=stride,
+                     padding=1, bias=False)
 
 
 def conv1x1(in_planes, out_planes, stride=1):
@@ -12,14 +29,8 @@ def conv1x1(in_planes, out_planes, stride=1):
 class BasicBlock(nn.Module):
     expansion = 1
 
-    def __init__(self, inplanes, planes, stride=1, downsample=None, affine=False, input_shape=[-1, -1, -1, -1]):
+    def __init__(self, inplanes, planes, stride=1, downsample=None):
         super(BasicBlock, self).__init__()
-        self.affine = affine
-        self.input_shape = input_shape
-
-        if self.affine:
-            self.affine_weight = torch.nn.Parameter(torch.eye(self.input_shape[2]*self.input_shape[3]))
-
         self.conv1 = conv3x3(inplanes, planes, stride)
         self.bn1 = nn.BatchNorm2d(planes)
         self.relu = nn.ReLU(inplace=True)
@@ -40,10 +51,6 @@ class BasicBlock(nn.Module):
 
         if self.downsample is not None:
             residual = self.downsample(x)
-        
-        if self.affine:
-            assert residual.shape[2] == self.input_shape[2], "%d vs %d" % (residual.shape[2], self.input_shape[2])
-            torch.mm(residual.view(-1, self.input_shape[2]*self.input_shape[3]), self.affine_weight)
 
         out += residual
         out = self.relu(out)
@@ -94,19 +101,13 @@ class ResNet(nn.Module):
     def __init__(self, block, layers, num_classes=1000):
         super(ResNet, self).__init__()
         self.inplanes = 64
-        self.conv1 = nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1,
-                               bias=False)
+        self.conv1 = nn.Conv2d(3, 64, kernel_size=3, padding=1, bias=False)
         self.bn1 = nn.BatchNorm2d(64)
         self.relu = nn.ReLU(inplace=True)
-        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
+        
         self.layer1 = self._make_layer(block, 64, layers[0])
-        if False:
-            self.layer2 = self._make_layer(block, 128, layers[1], stride=2, affine=True, input_shape=[128, 64, 8, 8])
-            self.layer3 = self._make_layer(block, 256, layers[2], stride=2, affine=True, input_shape=[128, 64, 4, 4])
-        else:
-            self.layer2 = self._make_layer(block, 128, layers[1], stride=2)
-            self.layer3 = self._make_layer(block, 256, layers[2], stride=2)
-
+        self.layer2 = self._make_layer(block, 128, layers[1], stride=2)
+        self.layer3 = self._make_layer(block, 256, layers[2], stride=2)
         self.layer4 = self._make_layer(block, 512, layers[3], stride=2)
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
         self.fc = nn.Linear(512 * block.expansion, num_classes)
@@ -118,7 +119,7 @@ class ResNet(nn.Module):
                 nn.init.constant_(m.weight, 1)
                 nn.init.constant_(m.bias, 0)
 
-    def _make_layer(self, block, planes, blocks, stride=1, affine=False, input_shape=[-1, -1, -1, -1]):
+    def _make_layer(self, block, planes, blocks, stride=1):
         downsample = None
         if stride != 1 or self.inplanes != planes * block.expansion:
             downsample = nn.Sequential(
@@ -130,7 +131,7 @@ class ResNet(nn.Module):
         layers.append(block(self.inplanes, planes, stride, downsample))
         self.inplanes = planes * block.expansion
         for _ in range(1, blocks):
-            layers.append(block(self.inplanes, planes, affine=affine, input_shape=input_shape))
+            layers.append(block(self.inplanes, planes))
 
         return nn.Sequential(*layers)
 
@@ -138,7 +139,6 @@ class ResNet(nn.Module):
         x = self.conv1(x)
         x = self.bn1(x)
         x = self.relu(x)
-        x = self.maxpool(x)
 
         x = self.layer1(x)
         x = self.layer2(x)
