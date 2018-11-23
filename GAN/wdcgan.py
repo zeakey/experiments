@@ -51,11 +51,6 @@ parser.add_argument('--Diters', type=int, default=5, help='number of D iters per
 opt = parser.parse_args()
 logger.info(opt)
 
-try:
-    os.makedirs(opt.outf)
-except OSError:
-    pass
-
 if opt.manualSeed is None:
     opt.manualSeed = random.randint(1, 10000)
 logger.info("Random Seed: %d" % opt.manualSeed)
@@ -290,5 +285,5 @@ for epoch in range(opt.nepochs):
             vutils.save_image(fake.data, join(TMP_DIR, 'epoch-%d-iter-%d-fake-images.png' % (epoch, i)))
 
     # do checkpointing
-    torch.save(netG.state_dict(), '%s/netG_epoch_%d.pth' % (opt.outf, epoch))
-    torch.save(netD.state_dict(), '%s/netD_epoch_%d.pth' % (opt.outf, epoch))
+    torch.save(netG.state_dict(), join('netG_epoch_%d.pth' % (epoch)))
+    torch.save(netD.state_dict(), join('netD_epoch_%d.pth' % (epoch)))
