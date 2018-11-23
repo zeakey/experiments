@@ -1,7 +1,7 @@
 from __future__ import print_function
 import argparse
-import os
-import random
+import os, random, logging
+from os.path import join, split, dirname, abspath, isfile, isdir
 import torch
 import torch.nn as nn
 import torch.nn.parallel
@@ -11,7 +11,20 @@ import torch.utils.data
 import torchvision.datasets as dset
 import torchvision.transforms as transforms
 import torchvision.utils as vutils
+from utils import analyse_spectral
 
+THIS_DIR = abspath(dirname(__file__))
+TMP_DIR = join(THIS_DIR, 'tmp', 'dcgan')
+os.makedirs(TMP_DIR, exist_ok=True)
+
+logger = logging.getLogger("DCGAN")
+file_handler = logging.FileHandler(join(TMP_DIR, 'log.txt'), "w")
+stdout_handler = logging.StreamHandler()
+logger.addHandler(file_handler)
+logger.addHandler(stdout_handler)
+stdout_handler.setFormatter(logging.Formatter('%(asctime)s %(levelname)s %(message)s'))
+file_handler.setFormatter(logging.Formatter('%(asctime)s %(levelname)s %(message)s'))
+logger.setLevel(logging.INFO)
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--dataset', required=True, help='cifar10 | lsun | imagenet | folder | lfw | fake')
@@ -33,7 +46,7 @@ parser.add_argument('--outf', default='.', help='folder to output images and mod
 parser.add_argument('--manualSeed', type=int, help='manual seed')
 
 opt = parser.parse_args()
-print(opt)
+logger.info(opt)
 
 try:
     os.makedirs(opt.outf)
@@ -42,14 +55,14 @@ except OSError:
 
 if opt.manualSeed is None:
     opt.manualSeed = random.randint(1, 10000)
-print("Random Seed: ", opt.manualSeed)
+logger.info("Random Seed: %d" % opt.manualSeed)
 random.seed(opt.manualSeed)
 torch.manual_seed(opt.manualSeed)
 
 cudnn.benchmark = True
 
 if torch.cuda.is_available() and not opt.cuda:
-    print("WARNING: You have a CUDA device, so you should probably run with --cuda")
+    logger.info("WARNING: You have a CUDA device, so you should probably run with --cuda")
 
 if opt.dataset in ['imagenet', 'folder', 'lfw']:
     # folder dataset
@@ -139,7 +152,7 @@ netG = Generator(ngpu).to(device)
 netG.apply(weights_init)
 if opt.netG != '':
     netG.load_state_dict(torch.load(opt.netG))
-print(netG)
+logger.info(netG)
 
 
 class Discriminator(nn.Module):
@@ -180,7 +193,7 @@ netD = Discriminator(ngpu).to(device)
 netD.apply(weights_init)
 if opt.netD != '':
     netD.load_state_dict(torch.load(opt.netD))
-print(netD)
+logger.info(netD)
 
 criterion = nn.BCELoss()
 
@@ -193,6 +206,20 @@ optimizerD = optim.Adam(netD.parameters(), lr=opt.lr, betas=(opt.beta1, 0.999))
 optimizerG = optim.Adam(netG.parameters(), lr=opt.lr, betas=(opt.beta1, 0.999))
 
 for epoch in range(opt.niter):
+    logger.info("-------------------- Analyse Spectral norm of netD --------------------")
+    spectral = analyse_spectral(netD)
+    logger.info("{:<15} {:<15} {:<15}".format(
+        "Parameter name",
+        "Maximal SV",
+        "Minimal SV"
+    ))
+    for l in spectral:
+        logger.info("{:<15} {:<15} {:<15}".format(
+            l,
+            "{:.3f}".format(spectral[l].max()),
+            "{:.3f}".format(spectral[l].min())
+        ))
+    logger.info("-----------------------------------------------------------------------")
     for i, data in enumerate(dataloader, 0):
         ############################
         # (1) Update D network: maximize log(D(x)) + log(1 - D(G(z)))
@@ -230,16 +257,16 @@ for epoch in range(opt.niter):
         D_G_z2 = output.mean().item()
         optimizerG.step()
 
-        print('[%d/%d][%d/%d] Loss_D: %.4f Loss_G: %.4f D(x): %.4f D(G(z)): %.4f / %.4f'
+        logger.info('[%d/%d][%d/%d] Loss_D: %.4f Loss_G: %.4f D(x): %.4f D(G(z)): %.4f / %.4f'
               % (epoch, opt.niter, i, len(dataloader),
                  errD.item(), errG.item(), D_x, D_G_z1, D_G_z2))
         if i % 100 == 0:
             vutils.save_image(real_cpu,
-                    '%s/real_samples.png' % opt.outf,
+                    join(TMP_DIR, 'epoch-%d-real-images.png' % epoch),
                     normalize=True)
             fake = netG(fixed_noise)
             vutils.save_image(fake.detach(),
-                    '%s/fake_samples_epoch_%03d.png' % (opt.outf, epoch),
+                    join(TMP_DIR, 'epoch-%d-iter-%d-fake-images.png' % (epoch, i)),
                     normalize=True)
 
     # do checkpointing
