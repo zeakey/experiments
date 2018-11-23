@@ -279,10 +279,9 @@ for epoch in range(opt.nepochs):
             errD.data[0], errG.data[0], errD_real.data[0], errD_fake.data[0]))
         if gen_iterations % 500 == 0:
             real_cpu = real_cpu.mul(0.5).add(0.5)
-            vutils.save_image(real_cpu, join(TMP_DIR, 'epoch-%d-real-images.png' % epoch))
+            vutils.save_image(real_cpu, join(TMP_DIR, 'epoch-%d-iter-%d-real-images.png' % (epoch, i)), normalize=True)
             fake = netG(fixed_noise)
-            fake.data = fake.data.mul(0.5).add(0.5)
-            vutils.save_image(fake.data, join(TMP_DIR, 'epoch-%d-iter-%d-fake-images.png' % (epoch, i)))
+            vutils.save_image(fake, join(TMP_DIR, 'epoch-%d-iter-%d-fake-images.png' % (epoch, i)), normalize=True)
 
     # do checkpointing
     torch.save(netG.state_dict(), join('netG_epoch_%d.pth' % (epoch)))
