@@ -11,20 +11,22 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import os, sys, argparse, time, shutil
-from os.path import join, split, abspath, isdir, isfile, dirname
-from utils import save_checkpoint, AverageMeter, accuracy
-import pytools, cv2
-from utils import save_checkpoint, Logger, ilsvrc2012, cifar10, cifar100
-import models
+from os.path import join, split, isdir, isfile, dirname, abspath
+
+import vltools
+from vltools import Logger
+from vltools import image as vlimage
+from vltools.pytorch import save_checkpoint, AverageMeter, ilsvrc2012, accuracy
 
 parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
+parser.add_argument('data', metavar='DIR', help='path to dataset')
 parser.add_argument('--model', metavar='STR', default="resnet18",
                     help='model name (resnet18|squeezenet), default="resnet18"')
-parser.add_argument('--epochs', default=180, type=int, metavar='N',
+parser.add_argument('--epochs', default=120, type=int, metavar='N',
                     help='number of total epochs to run')
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                     help='manual epoch number (useful on restarts)')
-parser.add_argument('--bs', '--batch-size', default=128, type=int,
+parser.add_argument('--bs', '--batch-size', default=256, type=int,
                     metavar='N', help='mini-batch size (default: 256)')
 parser.add_argument('--lr', '--learning-rate', default=0.1, type=float,
                     metavar='LR', help='initial learning rate')
@@ -36,235 +38,152 @@ parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
                     help='momentum')
 parser.add_argument('--weight-decay', '--wd', default=1e-4, type=float,
                     metavar='W', help='weight decay (default: 1e-4)')
-parser.add_argument('--print-freq', '-p', default=10, type=int,
+parser.add_argument('--print-freq', default=10, type=int,
                     metavar='N', help='print frequency (default: 10)')
 parser.add_argument('--resume', default='', type=str, metavar='PATH',
                     help='path to latest checkpoint (default: none)')
-parser.add_argument('--checkpoint', default='checkpoint', type=str, metavar='PATH',
-                    help='checkpoint path (default: checkpoint)')
-parser.add_argument('-e', '--evaluate', dest='evaluate', action='store_true',
-                    help='evaluate model on validation set')
-parser.add_argument('--affine', dest='affine', action='store_true',
-                    help='use affine transform')
+parser.add_argument('--num_classes', default=1000, type=int, metavar='N',
+                    help='number of classes')
 parser.add_argument('--tmp', help='tmp folder', default='tmp')
-parser.add_argument('--benchmark', dest='benchmark', action='store_true',
-                    help='benchmark time')
+parser.add_argument('--benchmark', dest='benchmark', action="store_true")
 args = parser.parse_args()
 args.model = args.model.lower()
 
 THIS_DIR = abspath(dirname(__file__))
-TMP_DIR = join(THIS_DIR, args.tmp)
-args.checkpoint = join(TMP_DIR, args.checkpoint)
-if not isdir(args.checkpoint):
-  os.makedirs(args.checkpoint)
+os.makedirs(args.tmp, exist_ok=True)
+
+logger = Logger(join(args.tmp, "log.txt"))
+
+# model and optimizer
+model = torchvision.models.resnet.resnet18(pretrained=True).cuda()
+optimizer = torch.optim.SGD(model.parameters(), args.lr, weight_decay=args.weight_decay)
+scheduler = lr_scheduler.MultiStepLR(optimizer, milestones=[60, 90], gamma=args.gamma)
+criterion = torch.nn.CrossEntropyLoss()
 
 def main():
-    print(args)
-    log = Logger(join(args.checkpoint, 'log.txt'))
-    sys.stdout = log
-    print("Loading training data...")
-    start = time.time()
-    transform_train = transforms.Compose([
-        transforms.RandomCrop(32, padding=4),
-        transforms.RandomHorizontalFlip(),
-        transforms.ToTensor(),
-        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
-    ])
-
-    transform_test = transforms.Compose([
-        transforms.ToTensor(),
-        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
-    ])
+    logger.info(args)
     
-    trainset = torchvision.datasets.CIFAR10(root='~/.torch/data', train=True, download=True, transform=transform_train)
-    train_loader = torch.utils.data.DataLoader(trainset, batch_size=args.bs, shuffle=True, num_workers=8)
+    # dataset
+    assert isdir(args.data)
+    start_time = time.time()
+    train_loader, val_loader = ilsvrc2012(args.data, bs=args.bs)
+    logger.info("Data loading done, %.3f sec elapsed." % (time.time() - start_time))
 
-    valset = torchvision.datasets.CIFAR10(root='~/.torch/data', train=False, download=True, transform=transform_test)
-    val_loader = torch.utils.data.DataLoader(valset, batch_size=100, shuffle=False, num_workers=8)
     
-    print("Data loading done, %.3f sec elapsed." % (time.time() - start))
-
-    # model
-    from models import resnet_affine, resnet
-    if args.affine:
-        model = resnet_affine.resnet18(num_classes=10)
-    else:
-        model = resnet.resnet18(num_classes=10)
-
-    model.cuda()
-    print(model)
-    print("================================================================================")
-    log.flush()
-
-    criterion = nn.CrossEntropyLoss().cuda()
-    print("Model parameters:")
-    for name, p in model.named_parameters():
-        print("{:<35} {:<35}".format(
-            name,
-            str(p.shape)
-        ))
-    print("================================================================================")
-    others = []
-    affine = []
-    for name, p in model.named_parameters():
-        if "affine" in name:
-            affine.append(p)
-            print(name)
-        else:
-            others.append(p)
-    optimizer = torch.optim.SGD([
-        {"params": affine, "lr": args.lr},
-        {"params": others, "lr": args.lr}],
-        args.lr, weight_decay=args.weight_decay)
-    scheduler = lr_scheduler.MultiStepLR(optimizer, milestones=[80, 120], gamma=args.gamma)
-
+    # records
+    best_acc1 = 0
+    acc1_record = []
+    acc5_record = []
+    loss_record = []
     # optionally resume from a checkpoint
     if args.resume:
         if isfile(args.resume):
-            print("=> loading checkpoint '{}'".format(args.resume))
+            logger.info("=> loading checkpoint '{}'".format(args.resume))
             checkpoint = torch.load(args.resume)
             args.start_epoch = checkpoint['epoch']
-            best_prec1 = checkpoint['best_prec1']
-            model.load_state_dict(checkpoint['state_dict'], strict=True)
-            # optimizer.load_state_dict(checkpoint['optimizer'])
-            print("=> loaded checkpoint '{}' (epoch {})"
+            best_acc1 = checkpoint['best_acc1']
+            model.load_state_dict(checkpoint['state_dict'])
+            optimizer.load_state_dict(checkpoint['optimizer'])
+            logger.info("=> loaded checkpoint '{}' (epoch {})"
                   .format(args.resume, checkpoint['epoch']))
         else:
             print("=> no checkpoint found at '{}'".format(args.resume))
-    best_prec1 = 0
-    prec1_record = []
-    prec5_record = []
-    loss_record = []
-    if args.evaluate:
-        # Others 0    Sports 1     Music 2 
-        model.cuda()
-        
-        prec1, prec5 = validate(val_loader, model, criterion)
-        
-        print("Prec@1%.3f, Prec@5%.3f" % (prec1, prec5))
-        return
-        
-    for epoch in range(args.start_epoch, args.epochs):
-        save_checkpoint({
-            'epoch': epoch + 1,
-            'state_dict': model.state_dict(),
-            'best_prec1': best_prec1,
-            'optimizer' : optimizer.state_dict(),
-            }, False, filename=join(args.checkpoint, 'checkpoint.pth'))
 
-        if args.benchmark:
-            print("Start to benchmark inference time...")
-            bench_time = AverageMeter()
-            model.cpu()
-            model.eval()
-            with torch.no_grad():
-                bench_start = time.time()
-                for i, (data, _) in enumerate(val_loader):
-                    # target = target.cuda(non_blocking=True)
-                    # input = input.cuda()
-                    # compute output
-                    data = data.cpu()
-                    _ = model(data)
-                    bench_end = time.time()
-                    bench_time.update(bench_end - bench_start)
-                    print("---> Running batch%d (batchsize%d), time elapsed %.3f, %.3fms per sample" % \
-                         (i+1, args.bs, bench_end - bench_start, 1000*(bench_end - bench_start)/args.bs/(i+1)))
-                    if i >= 3:
-                        break
-            model.cuda()
-            print("Inference %d samples, time elapsed %f" % (args.bs * (i+1), bench_time.avg))
-            input("Press Enter to Continue...")
-        
-        if epoch == 0:
-            prec1, prec5 = validate(val_loader, model, criterion)
-        
-        # train for one epoch
-        loss_record += train(train_loader, model, criterion, optimizer, epoch)
-        
-        # adjust learning rate
+    for epoch in range(args.start_epoch, args.epochs):
+
+        loss_record.append(train(train_loader, epoch))
         scheduler.step()
 
         # evaluate on validation set
-        prec1, prec5 = validate(val_loader, model, criterion)
-        prec1_record.append(prec1)
-        prec5_record.append(prec5)
+        acc1, acc5 = validate(val_loader)
+        acc1_record.append(acc1)
+        acc5_record.append(acc5)
 
         # remember best prec@1 and save checkpoint
-        is_best = prec1 > best_prec1
-        best_prec1 = max(prec1, best_prec1)
+        is_best = acc1 > best_acc1
+        best_acc1 = max(acc1_record)
+        best_acc5 = max(acc5_record)
+        logger.info("Best acc1=%.3f" % best_acc1)
+        logger.info("Best acc5=%.3f" % best_acc5)
         save_checkpoint({
             'epoch': epoch + 1,
             'state_dict': model.state_dict(),
-            'best_prec1': best_prec1,
+            'best_acc1': best_acc1,
+            'best_acc5': best_acc5,
             'optimizer' : optimizer.state_dict(),
-            }, is_best, filename=join(args.checkpoint, 'checkpoint.pth'))
+            }, is_best, filename=join(args.tmp, 'checkpoint.pth'))
         if is_best:
-            shutil.copyfile(join(args.checkpoint, 'checkpoint.pth'), join(args.checkpoint, 'model_best.pth'))
-        print("Evaluating done, best prec1@%.3f" % max(prec1_record))
-        log.flush()
-    loss_record = np.array(loss_record)
-    _, axes = plt.subplots(1, 2)
-    axes[0].plot(prec1_record, color='r', linewidth=2)
-    axes[0].plot(np.argmax(prec1_record), max(prec1_record), "*r", linewidth=8) # dot best acc
-    axes[0].plot(prec5_record, color='g', linewidth=2)
-    axes[0].plot(np.argmax(prec5_record), max(prec5_record), "*g", linewidth=8) # dot best acc
-    axes[0].legend(['Top1 Accuracy (Best%.3f)' % max(prec1_record), 'Top5 Accuracy (Best%.3f)' % max(prec5_record)])
-    axes[0].grid(alpha=0.5, linestyle='dotted', linewidth=2, color='black')
+            shutil.copyfile(join(args.tmp, 'checkpoint.pth'), join(args.tmp, 'model_best.pth'))
 
-    axes[1].plot(loss_record)
-    axes[1].grid(alpha=0.5, linestyle='dotted', linewidth=2, color='black')
-    axes[1].legend(["Loss"])
+        # We continously save records in case of interupt
+        fig, axes = plt.subplots(1, 2, figsize=(8, 4))
+        axes[0].plot(acc1_record, color='r', linewidth=2)
+        axes[0].plot(acc5_record, color='g', linewidth=2)
+        axes[0].legend(['Top1 Accuracy (Best%.3f)' % max(acc1_record), 'Top5 Accuracy (Best%.3f)' % max(acc5_record)],
+                       loc="lower right")
+        axes[0].grid(alpha=0.5, linestyle='dotted', linewidth=2, color='black')
+        axes[0].set_xlabel("Epoch")
+        axes[0].set_ylabel("Precision")
 
-    plt.savefig(join(args.checkpoint, 'record.pdf'))
+        axes[1].plot(loss_record)
+        axes[1].grid(alpha=0.5, linestyle='dotted', linewidth=2, color='black')
+        axes[1].legend(["Loss"], loc="upper right")
+        axes[1].set_xlabel("Epoch")
+        axes[1].set_ylabel("Loss")
 
-    record = dict({'prec1': np.array(prec1_record), 'prec5': np.array(prec5_record), 'loss_record': np.array(loss_record)})
-    savemat(join(args.checkpoint, 'precision.mat'), record)
+        plt.tight_layout()
+        plt.savefig(join(args.tmp, 'record.pdf'))
+        plt.close(fig)
 
-def train(train_loader, model, criterion, optimizer, epoch):
+        record = dict({'acc1': np.array(acc1_record), 'acc5': np.array(acc5_record), 'loss_record': np.array(loss_record)})
+        savemat(join(args.tmp, 'precision.mat'), record)
+    logger.info("Optimization done!")
+
+def train(train_loader, epoch):
     batch_time = AverageMeter()
     data_time = AverageMeter()
-    loss_meter = AverageMeter()
-    top1_meter = AverageMeter()
-    top5_meter = AverageMeter()
-    loss_record = []
+    losses = AverageMeter()
+    top1 = AverageMeter()
+    top5 = AverageMeter()
+
     # switch to train mode
     model.train()
 
     end = time.time()
-    for i, (input, target) in enumerate(train_loader):
+    for i, (data, target) in enumerate(train_loader):
         # measure data loading time
         data_time.update(time.time() - end)
         target = target.cuda(non_blocking=True)
-        input = input.cuda()
-        output = model(input)
+        data = data.cuda()
+        output = model(data)
         loss = criterion(output, target)
 
         # measure accuracy and record los
-        prec1, prec5 = accuracy(output, target, topk=(1, 5))
-        loss_meter.update(loss.item(), input.size(0))
-        top1_meter.update(prec1.item(), input.size(0))
-        top5_meter.update(prec5.item(), input.size(0))
+        acc1, acc5 = accuracy(output, target, topk=(1, 5))
+        losses.update(loss.item(), data.size(0))
+        top1.update(acc1.item(), data.size(0))
+        top5.update(acc5.item(), data.size(0))
 
         # compute gradient and do SGD step
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
+
         # measure elapsed time
         batch_time.update(time.time() - end)
         end = time.time()
 
         if i % args.print_freq == 0:
-            print('Epoch: [{0}][{1}/{2}]\t'
-                  'Time {batch_time.val:.3f} (avg={batch_time.avg:.3f})\t'
-                  'Loss {loss.val:.3f} (avg={loss.avg:.3f})\t'
-                  'Prec@1 {top1.val:.3f} (avg={top1.avg:.3f})\t'
-                  'Prec@5 {top5.val:.3f} (avg={top5.avg:.3f})'.format(
-                   epoch, i, len(train_loader), batch_time=batch_time,
-                   loss=loss_meter, top1=top1_meter, top5=top5_meter))
-            loss_record.append(loss_meter.avg)
-    return loss_record
+            logger.info('Epoch: [{0}][{1}/{2}]\t'
+                  'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
+                  'Train Loss {loss.val:.3f} ({loss.avg:.3f})\t'
+                  'Prec@1 {top1.val:.3f} ({top1.avg:.3f})\t'
+                  'Prec@5 {top5.val:.3f} ({top5.avg:.3f})'.format(
+                   epoch, i, len(train_loader),
+                   batch_time=batch_time, loss=losses, top1=top1, top5=top5))
+    return losses.avg
 
-def validate(val_loader, model, criterion):
+def validate(val_loader):
     batch_time = AverageMeter()
     losses = AverageMeter()
     top1 = AverageMeter()
@@ -274,34 +193,29 @@ def validate(val_loader, model, criterion):
 
     with torch.no_grad():
         end = time.time()
-        for i, (input, target) in enumerate(val_loader):
+        for i, (data, target) in enumerate(val_loader):
             target = target.cuda(non_blocking=True)
-            input = input.cuda()
+            data = data.cuda()
             # compute output
-            output = model(input)
-
+            output = model(data)
             loss = criterion(output, target)
-            losses.update(loss.item(), input.size(0))
-
-            prec1, prec5 = accuracy(output, target, topk=(1, 5))
-            top1.update(prec1.item(), input.size(0))
-            top5.update(prec5.item(), input.size(0))
-
+            # measure accuracy and record loss
+            acc1, acc5 = accuracy(output, target, topk=(1, 5))
+            losses.update(loss.item(), data.size(0))
+            top1.update(acc1.item(), data.size(0))
+            top5.update(acc5.item(), data.size(0))
             # measure elapsed time
             batch_time.update(time.time() - end)
             end = time.time()
-
             if i % args.print_freq == 0:
                 print('Test: [{0}/{1}]\t'
-                      'Time {batch_time.val:.3f} (avg={batch_time.avg:.3f})\t'
-                      'Loss {loss.val:.3f} (avg={loss.avg:.3f})\t'
+                      'Test Loss {loss.val:.3f} (avg={loss.avg:.3f})\t'
                       'Prec@1 {top1.val:.3f} (avg={top1.avg:.3f})\t'
                       'Prec@5 {top5.val:.3f} (avg={top5.avg:.3f})'.format(
-                       i, len(val_loader), batch_time=batch_time,
-                       loss=losses, top1=top1, top5=top5))
+                       i, len(val_loader), loss=losses, top1=top1, top5=top5))
 
-        print(' * Prec@1 {top1.avg:.3f}'.format(top1=top1))
-
+        logger.info(' * Prec@1 {top1.avg:.3f} Prec@5 {top5.avg:.3f}'
+              .format(top1=top1, top5=top5))
     return top1.avg, top5.avg
 
 if __name__ == '__main__':
