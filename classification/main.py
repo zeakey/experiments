@@ -137,9 +137,8 @@ def main():
             'best_acc1': best_acc1,
             'best_acc5': best_acc5,
             'optimizer' : optimizer.state_dict(),
-            }, is_best, filename=join(args.tmp, 'checkpoint.pth'))
-        if is_best:
-            shutil.copyfile(join(args.tmp, 'checkpoint.pth'), join(args.tmp, 'model_best.pth'))
+            }, is_best, path=CONFIGS["MISC"]["TMP"])
+
 
         # We continously save records in case of interupt
         fig, axes = plt.subplots(1, 2, figsize=(8, 4))
@@ -158,11 +157,11 @@ def main():
         axes[1].set_ylabel("Loss")
 
         plt.tight_layout()
-        plt.savefig(join(args.tmp, 'record.pdf'))
 
         if CONFIGS["VISDOM"]["VISDOM"]:
             vis.matplot(fig, win=0)
 
+        plt.savefig(join(CONFIGS["MISC"]["TMP"], 'record.pdf'))
         plt.close(fig)
 
         record = dict({'acc1': np.array(acc1_record), 'acc5': np.array(acc5_record), 'loss_record': np.array(loss_record)})
