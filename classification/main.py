@@ -182,8 +182,12 @@ def train(train_loader, epoch):
     for i, (data, target) in enumerate(train_loader):
         # measure data loading time
         data_time.update(time.time() - end)
-        target = target.cuda(device=CONFIGS["CUDA"]["GPU_ID"], non_blocking=True)
-        data = data.cuda(device=CONFIGS["CUDA"]["GPU_ID"])
+        if CONFIGS["CUDA"]["DATA_PARALLEL"]:
+            target = target.cuda(non_blocking=True)
+            data = data.cuda()
+        else:
+            target = target.cuda(device=CONFIGS["CUDA"]["GPU_ID"], non_blocking=True)
+            data = data.cuda(device=CONFIGS["CUDA"]["GPU_ID"])
         output = model(data)
         loss = criterion(output, target)
 
@@ -224,8 +228,12 @@ def validate(val_loader):
     with torch.no_grad():
         end = time.time()
         for i, (data, target) in enumerate(val_loader):
-            target = target.cuda(non_blocking=True)
-            data = data.cuda()
+            if CONFIGS["CUDA"]["DATA_PARALLEL"]:
+                target = target.cuda(non_blocking=True)
+                data = data.cuda()
+            else:
+                target = target.cuda(device=CONFIGS["CUDA"]["GPU_ID"], non_blocking=True)
+                data = data.cuda(device=CONFIGS["CUDA"]["GPU_ID"])
             # compute output
             output = model(data)
             loss = criterion(output, target)
