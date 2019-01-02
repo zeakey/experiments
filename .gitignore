@@ -2,3 +2,7 @@ tmp/
 data/
 models/
 *.pyc
+
+# Notebook
+.ipynb_checkpoints/
+notebooks/*.html
