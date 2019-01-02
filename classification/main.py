@@ -115,6 +115,7 @@ def main():
         else:
             logger.info("=> no checkpoint found at '{}'".format(args.resume))
 
+    start_time = time.time()
     for epoch in range(args.start_epoch, args.epochs):
 
         loss_record.append(train(train_loader, epoch))
@@ -166,6 +167,14 @@ def main():
 
         record = dict({'acc1': np.array(acc1_record), 'acc5': np.array(acc5_record), 'loss_record': np.array(loss_record)})
         savemat(join(args.tmp, 'precision.mat'), record)
+
+        t = time.time() - start_time           # total seconds from starting
+        t /= (epoch + 1) - args.start_epoch    # seconds per epoch
+        t = (args.epochs - epoch - 1) * t      # remaining seconds
+        day= t // 86400
+        hour= (t- (day * 86400)) // 3600
+        logger.info("Epoch %d finished, remaining %d days %d hours." % (day, hour))
+
     logger.info("Optimization done!")
 
 def train(train_loader, epoch):
