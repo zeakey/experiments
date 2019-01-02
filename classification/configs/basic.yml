@@ -1,0 +1,24 @@
+DATA:
+  DATASET: "imagenet"
+  DIR: "/media/data2/dataset/ilsvrc12/"
+
+OPTIMIZER:
+  TYPE: adam
+  WEIGHT_DECAY: 0.0001
+  LR: 0.00001
+  GAMMA: 0.5
+  BS: 256
+
+CUDA:
+  CUDA: True
+  GPU_ID: 0
+  DATA_PARALLEL: False
+
+VISDOM:
+  VISDOM: True
+  PORT: 8097
+
+MISC:
+  LOGFREQ: 20
+  TMP: "tmp/tmp"
+

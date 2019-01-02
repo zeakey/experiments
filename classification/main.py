@@ -10,16 +10,20 @@ from scipy.io import savemat
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-import os, sys, argparse, time, shutil
+import os, sys, argparse, time, shutil, visdom
 from os.path import join, split, isdir, isfile, dirname, abspath
 
 import vltools
 from vltools import Logger
 from vltools import image as vlimage
 from vltools.pytorch import save_checkpoint, AverageMeter, ilsvrc2012, accuracy
+import utils
+
+from models import msnet
 
 parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
-parser.add_argument('data', metavar='DIR', help='path to dataset')
+parser.add_argument('--config', default='configs/basic.yml', help='path to dataset')
+parser.add_argument('--data', metavar='DIR', default="/media/data2/dataset/ilsvrc12/", help='path to dataset')
 parser.add_argument('--model', metavar='STR', default="resnet18",
                     help='model name (resnet18|squeezenet), default="resnet18"')
 parser.add_argument('--epochs', default=120, type=int, metavar='N',
@@ -44,32 +48,54 @@ parser.add_argument('--resume', default='', type=str, metavar='PATH',
                     help='path to latest checkpoint (default: none)')
 parser.add_argument('--num_classes', default=1000, type=int, metavar='N',
                     help='number of classes')
-parser.add_argument('--tmp', help='tmp folder', default='tmp')
+parser.add_argument('--tmp', help='tmp folder', default='tmp/tmp')
 parser.add_argument('--benchmark', dest='benchmark', action="store_true")
+parser.add_argument('--gpu', default=0, type=int, metavar='N', help='GPU ID')
 args = parser.parse_args()
 args.model = args.model.lower()
+CONFIGS = utils.load_yaml(args.config)
+CONFIGS = utils.merge_config(args, CONFIGS)
+
+if CONFIGS["VISDOM"]["VISDOM"] == True:
+    import visdom
+    vis = visdom.Visdom(port=CONFIGS["VISDOM"]["PORT"])
 
 THIS_DIR = abspath(dirname(__file__))
-os.makedirs(args.tmp, exist_ok=True)
+os.makedirs(CONFIGS["MISC"]["TMP"], exist_ok=True)
 
-logger = Logger(join(args.tmp, "log.txt"))
+logger = Logger(join(CONFIGS["MISC"]["TMP"], "log.txt"))
 
 # model and optimizer
-model = torchvision.models.resnet.resnet18(pretrained=True).cuda()
-optimizer = torch.optim.SGD(model.parameters(), args.lr, weight_decay=args.weight_decay)
-scheduler = lr_scheduler.MultiStepLR(optimizer, milestones=[60, 90], gamma=args.gamma)
+# model = torchvision.models.resnet.resnet50(pretrained=False)
+model = msnet.MSNet50()
+if CONFIGS["CUDA"]["DATA_PARALLEL"]:
+    logger.info("Model Data Parallel")
+    model = nn.DataParallel(model).cuda()
+else:
+    model = model.cuda(device=CONFIGS["CUDA"]["GPU_ID"])
+
+optimizer = torch.optim.SGD(
+    model.parameters(),
+    lr=CONFIGS["OPTIMIZER"]["LR"],
+    weight_decay=CONFIGS["OPTIMIZER"]["WEIGHT_DECAY"],
+    nesterov=True
+)
+scheduler = lr_scheduler.MultiStepLR(optimizer, milestones=[60, 90], gamma=CONFIGS["OPTIMIZER"]["GAMMA"])
 criterion = torch.nn.CrossEntropyLoss()
 
+logger.info("Model details:")
+logger.info(model)
+
 def main():
-    logger.info(args)
+    logger.info(CONFIGS)
     
     # dataset
-    assert isdir(args.data)
+    print(CONFIGS["DATA"]["DIR"])
+    assert isdir(CONFIGS["DATA"]["DIR"]), CONFIGS["DATA"]["DIR"]
     start_time = time.time()
-    train_loader, val_loader = ilsvrc2012(args.data, bs=args.bs)
+    train_loader, val_loader = ilsvrc2012(CONFIGS["DATA"]["DIR"], bs=CONFIGS["OPTIMIZER"]["BS"])
     logger.info("Data loading done, %.3f sec elapsed." % (time.time() - start_time))
 
-    
     # records
     best_acc1 = 0
     acc1_record = []
@@ -87,7 +113,7 @@ def main():
             logger.info("=> loaded checkpoint '{}' (epoch {})"
                   .format(args.resume, checkpoint['epoch']))
         else:
-            print("=> no checkpoint found at '{}'".format(args.resume))
+            logger.info("=> no checkpoint found at '{}'".format(args.resume))
 
     for epoch in range(args.start_epoch, args.epochs):
 
@@ -133,6 +159,10 @@ def main():
 
         plt.tight_layout()
         plt.savefig(join(args.tmp, 'record.pdf'))
+
+        if CONFIGS["VISDOM"]["VISDOM"]:
+            vis.matplot(fig, win=0)
+
         plt.close(fig)
 
         record = dict({'acc1': np.array(acc1_record), 'acc5': np.array(acc5_record), 'loss_record': np.array(loss_record)})
@@ -153,8 +183,8 @@ def train(train_loader, epoch):
     for i, (data, target) in enumerate(train_loader):
         # measure data loading time
         data_time.update(time.time() - end)
-        target = target.cuda(non_blocking=True)
-        data = data.cuda()
+        target = target.cuda(device=CONFIGS["CUDA"]["GPU_ID"], non_blocking=True)
+        data = data.cuda(device=CONFIGS["CUDA"]["GPU_ID"])
         output = model(data)
         loss = criterion(output, target)
 
@@ -173,7 +203,8 @@ def train(train_loader, epoch):
         batch_time.update(time.time() - end)
         end = time.time()
 
-        if i % args.print_freq == 0:
+        if i % CONFIGS["MISC"]["LOGFREQ"] == 0:
+
             logger.info('Epoch: [{0}][{1}/{2}]\t'
                   'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
                   'Train Loss {loss.val:.3f} ({loss.avg:.3f})\t'
@@ -208,7 +239,7 @@ def validate(val_loader):
             batch_time.update(time.time() - end)
             end = time.time()
             if i % args.print_freq == 0:
-                print('Test: [{0}/{1}]\t'
+                logger.info('Test: [{0}/{1}]\t'
                       'Test Loss {loss.val:.3f} (avg={loss.avg:.3f})\t'
                       'Prec@1 {top1.val:.3f} (avg={top1.avg:.3f})\t'
                       'Prec@5 {top5.val:.3f} (avg={top5.avg:.3f})'.format(
