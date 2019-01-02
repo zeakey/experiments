@@ -78,7 +78,7 @@ optimizer = torch.optim.SGD(
     model.parameters(),
     lr=CONFIGS["OPTIMIZER"]["LR"],
     weight_decay=CONFIGS["OPTIMIZER"]["WEIGHT_DECAY"],
-    nesterov=True
+    nesterov=False
 )
 scheduler = lr_scheduler.MultiStepLR(optimizer, milestones=[60, 90], gamma=CONFIGS["OPTIMIZER"]["GAMMA"])
 criterion = torch.nn.CrossEntropyLoss()
