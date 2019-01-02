@@ -95,40 +95,84 @@ class Bottleneck(nn.Module):
 
         return out
 
+class MSModule(nn.Module):
 
-class ResNet(nn.Module):
+    def __init__(self, block, blocks, inplanes, planes, stride=[2, 1, 2]):
+        super(MSModule, self).__init__()
+        self.inplanes = inplanes
+        self.stride = stride
 
-    def __init__(self, block, layers, num_classes=1000, zero_init_residual=False):
-        super(ResNet, self).__init__()
+        self.stream0 = self._make_layer(block, inplanes[0], planes[0], blocks[0], stride=stride[0])
+        self.stream1 = self._make_layer(block, inplanes[1], planes[1], blocks[1], stride=stride[1])
+        
+
+        self.match = None
+
+        if planes[0] != planes[1]:
+            self.match = conv1x1(min(planes) * block.expansion, max(planes) * block.expansion)
+        self.inplanes = max(planes) * block.expansion
+
+        if stride[2] != 1:
+            self.res = BasicBlock(self.inplanes, self.inplanes, stride=stride[2],
+                        downsample=nn.Sequential(
+                            conv1x1(self.inplanes, self.inplanes, stride[2]),
+                            nn.BatchNorm2d(self.inplanes)
+                        ))
+        else:
+            self.res = BasicBlock(self.inplanes, self.inplanes, stride=stride[2])
+
+    def _make_layer(self, block, inplanes, planes, blocks, stride=1):
+        downsample = None
+        if stride != 1 or inplanes != planes * block.expansion:
+            downsample = nn.Sequential(
+                conv1x1(inplanes, planes * block.expansion, stride),
+                nn.BatchNorm2d(planes * block.expansion),
+            )
+
+        layers = []
+        layers.append(block(inplanes, planes, stride, downsample))
+
+        for _ in range(1, blocks):
+            layers.append(block(planes * block.expansion, planes))
+
+        return nn.Sequential(*layers)
+    
+    def forward(self, x):
+
+        stream0 = self.stream0(x)
+        stream1 = self.stream1(x)
+        if self.stride[0] != self.stride[1]:
+            assert (self.stride[0] / self.stride[1]) % 2 == 0
+            stream0 = nn.functional.interpolate(stream0, scale_factor=2, mode="bilinear", align_corners=True)
+
+        return self.res(stream0 + stream1)
+
+class MSNet50(nn.Module):
+
+    def __init__(self, block=Bottleneck, num_classes=1000):
+
+        super(MSNet50, self).__init__()
         self.inplanes = 64
         self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3,
                                bias=False)
         self.bn1 = nn.BatchNorm2d(64)
         self.relu = nn.ReLU(inplace=True)
-        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
-        self.layer1 = self._make_layer(block, 64, layers[0])
-        self.layer2 = self._make_layer(block, 128, layers[1], stride=2)
-        self.layer3 = self._make_layer(block, 256, layers[2], stride=2)
-        self.layer4 = self._make_layer(block, 512, layers[3], stride=2)
+
+        self.conv2a = conv3x3(64, 64, stride=2)
+        
+        self.conv2b1 = conv3x3(64, 32, stride=1)
+        self.conv2b2 = conv3x3(32, 32, stride=2)
+        self.conv2b3 = conv1x1(32, 64, stride=1)
+
+        self.module1 = MSModule(block=block, blocks=[2, 1], inplanes = [64, 64], planes=[64, 64], stride=[2, 1, 2])
+        self.module2 = MSModule(block=block, blocks=[3, 1], inplanes = [256, 256], planes = [128, 128], stride=[2, 1, 2])
+        self.module3 = MSModule(block=block, blocks=[4, 2], inplanes = [512, 512], planes = [256, 256], stride=[2, 1, 1])
+        
+        self.inplanes = 1024
+        self.module4 = self._make_layer(block=Bottleneck, planes=512, blocks=3, stride=2)
+
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
         self.fc = nn.Linear(512 * block.expansion, num_classes)
-
-        for m in self.modules():
-            if isinstance(m, nn.Conv2d):
-                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
-            elif isinstance(m, nn.BatchNorm2d):
-                nn.init.constant_(m.weight, 1)
-                nn.init.constant_(m.bias, 0)
-
-        # Zero-initialize the last BN in each residual branch,
-        # so that the residual branch starts with zeros, and each residual block behaves like an identity.
-        # This improves the model by 0.2~0.3% according to https://arxiv.org/abs/1706.02677
-        if zero_init_residual:
-            for m in self.modules():
-                if isinstance(m, Bottleneck):
-                    nn.init.constant_(m.bn3.weight, 0)
-                elif isinstance(m, BasicBlock):
-                    nn.init.constant_(m.bn2.weight, 0)
 
     def _make_layer(self, block, planes, blocks, stride=1):
         downsample = None
@@ -146,79 +190,41 @@ class ResNet(nn.Module):
 
         return nn.Sequential(*layers)
 
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+            elif isinstance(m, nn.BatchNorm2d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+
+        # Zero-initialize the last BN in each residual branch,
+        # so that the residual branch starts with zeros, and each residual block behaves like an identity.
+        # This improves the model by 0.2~0.3% according to https://arxiv.org/abs/1706.02677
+
+        for m in self.modules():
+            if isinstance(m, Bottleneck):
+                nn.init.constant_(m.bn3.weight, 0)
+            elif isinstance(m, BasicBlock):
+                nn.init.constant_(m.bn2.weight, 0)
+
     def forward(self, x):
         x = self.conv1(x)
         x = self.bn1(x)
         x = self.relu(x)
-        x = self.maxpool(x)
 
-        x = self.layer1(x)
-        x = self.layer2(x)
-        x = self.layer3(x)
-        x = self.layer4(x)
+        x2a = self.conv2a(x)
+        x2b = self.conv2b1(x)
+        x2b = self.conv2b2(x2b)
+        x2b = self.conv2b3(x2b)
+        x = x2a + x2b
+
+        x = self.module1(x)
+        x = self.module2(x)
+        x = self.module3(x)
+        x = self.module4(x)
 
         x = self.avgpool(x)
         x = x.view(x.size(0), -1)
         x = self.fc(x)
 
         return x
-
-
-def resnet18(pretrained=False, **kwargs):
-    """Constructs a ResNet-18 model.
-
-    Args:
-        pretrained (bool): If True, returns a model pre-trained on ImageNet
-    """
-    model = ResNet(BasicBlock, [2, 2, 2, 2], **kwargs)
-    if pretrained:
-        model.load_state_dict(model_zoo.load_url(model_urls['resnet18']))
-    return model
-
-
-def resnet34(pretrained=False, **kwargs):
-    """Constructs a ResNet-34 model.
-
-    Args:
-        pretrained (bool): If True, returns a model pre-trained on ImageNet
-    """
-    model = ResNet(BasicBlock, [3, 4, 6, 3], **kwargs)
-    if pretrained:
-        model.load_state_dict(model_zoo.load_url(model_urls['resnet34']))
-    return model
-
-
-def resnet50(pretrained=False, **kwargs):
-    """Constructs a ResNet-50 model.
-
-    Args:
-        pretrained (bool): If True, returns a model pre-trained on ImageNet
-    """
-    model = ResNet(Bottleneck, [3, 4, 6, 3], **kwargs)
-    if pretrained:
-        model.load_state_dict(model_zoo.load_url(model_urls['resnet50']))
-    return model
-
-
-def resnet101(pretrained=False, **kwargs):
-    """Constructs a ResNet-101 model.
-
-    Args:
-        pretrained (bool): If True, returns a model pre-trained on ImageNet
-    """
-    model = ResNet(Bottleneck, [3, 4, 23, 3], **kwargs)
-    if pretrained:
-        model.load_state_dict(model_zoo.load_url(model_urls['resnet101']))
-    return model
-
-
-def resnet152(pretrained=False, **kwargs):
-    """Constructs a ResNet-152 model.
-
-    Args:
-        pretrained (bool): If True, returns a model pre-trained on ImageNet
-    """
-    model = ResNet(Bottleneck, [3, 8, 36, 3], **kwargs)
-    if pretrained:
-        model.load_state_dict(model_zoo.load_url(model_urls['resnet152']))
-    return model
