@@ -128,6 +128,89 @@ class MSModule(nn.Module):
 
         return self.res(stream0 + stream1)
 
+class MSNet34(nn.Module):
+
+    def __init__(self, block=BasicBlock, num_classes=1000):
+
+        super(MSNet34, self).__init__()
+        self.inplanes = 64
+        self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3,
+                               bias=False)
+        self.bn1 = nn.BatchNorm2d(64)
+        self.relu = nn.ReLU(inplace=True)
+
+        self.conv2a = conv3x3(64, 64, stride=2)
+
+        self.conv2b1 = conv3x3(64, 32, stride=1)
+        self.conv2b2 = conv3x3(32, 32, stride=2)
+        self.conv2b3 = conv1x1(32, 64, stride=1)
+
+        self.module1 = MSModule(block=block, blocks=[2, 1], inplanes = [64, 64], planes=[64, 64], stride=[2, 1, 2])
+        self.module2 = MSModule(block=block, blocks=[3, 1], inplanes = [64, 64], planes = [128, 128], stride=[2, 1, 2])
+        self.module3 = MSModule(block=block, blocks=[4, 2], inplanes = [128, 128], planes = [256, 256], stride=[2, 1, 1])
+
+        self.inplanes = 256
+        self.module4 = self._make_layer(block=block, planes=512, blocks=3, stride=2)
+
+        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
+        self.fc = nn.Linear(512 * block.expansion, num_classes)
+
+    def _make_layer(self, block, planes, blocks, stride=1):
+        downsample = None
+        if stride != 1 or self.inplanes != planes * block.expansion:
+            downsample = nn.Sequential(
+                conv1x1(self.inplanes, planes * block.expansion, stride),
+                nn.BatchNorm2d(planes * block.expansion),
+            )
+
+        layers = []
+        layers.append(block(self.inplanes, planes, stride, downsample))
+        self.inplanes = planes * block.expansion
+        for _ in range(1, blocks):
+            layers.append(block(self.inplanes, planes))
+
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+            elif isinstance(m, nn.BatchNorm2d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+
+        # Zero-initialize the last BN in each residual branch,
+        # so that the residual branch starts with zeros, and each residual block behaves like an identity.
+        # This improves the model by 0.2~0.3% according to https://arxiv.org/abs/1706.02677
+        for m in self.modules():
+            if isinstance(m, Bottleneck):
+                nn.init.constant_(m.bn3.weight, 0)
+            elif isinstance(m, BasicBlock):
+                nn.init.constant_(m.bn2.weight, 0)
+
+        return nn.Sequential(*layers)
+
+        
+
+    def forward(self, x):
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.relu(x)
+
+        x2a = self.conv2a(x)
+        x2b = self.conv2b1(x)
+        x2b = self.conv2b2(x2b)
+        x2b = self.conv2b3(x2b)
+        x = x2a + x2b
+
+        x = self.module1(x)
+        x = self.module2(x)
+        x = self.module3(x)
+        x = self.module4(x)
+
+        x = self.avgpool(x)
+        x = x.view(x.size(0), -1)
+        x = self.fc(x)
+
+        return x
+
 class MSNet50(nn.Module):
 
     def __init__(self, block=Bottleneck, num_classes=1000):
@@ -150,7 +233,7 @@ class MSNet50(nn.Module):
         self.module3 = MSModule(block=block, blocks=[4, 2], inplanes = [512, 512], planes = [256, 256], stride=[2, 1, 1])
         
         self.inplanes = 1024
-        self.module4 = self._make_layer(block=Bottleneck, planes=512, blocks=3, stride=2)
+        self.module4 = self._make_layer(block=block, planes=512, blocks=3, stride=2)
 
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
         self.fc = nn.Linear(512 * block.expansion, num_classes)
@@ -169,8 +252,6 @@ class MSNet50(nn.Module):
         for _ in range(1, blocks):
             layers.append(block(self.inplanes, planes))
 
-        return nn.Sequential(*layers)
-
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
                 nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
@@ -181,12 +262,13 @@ class MSNet50(nn.Module):
         # Zero-initialize the last BN in each residual branch,
         # so that the residual branch starts with zeros, and each residual block behaves like an identity.
         # This improves the model by 0.2~0.3% according to https://arxiv.org/abs/1706.02677
-
         for m in self.modules():
             if isinstance(m, Bottleneck):
                 nn.init.constant_(m.bn3.weight, 0)
             elif isinstance(m, BasicBlock):
                 nn.init.constant_(m.bn2.weight, 0)
+
+        return nn.Sequential(*layers)
 
     def forward(self, x):
         x = self.conv1(x)
