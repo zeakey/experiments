@@ -51,6 +51,8 @@ parser.add_argument('--num_classes', default=1000, type=int, metavar='N',
 parser.add_argument('--tmp', help='tmp folder', default='tmp/tmp')
 parser.add_argument('--benchmark', dest='benchmark', action="store_true")
 parser.add_argument('--gpu', default=0, type=int, metavar='N', help='GPU ID')
+
+parser.add_argument('--visport', default=8097, type=int, metavar='N', help='Visdom port')
 args = parser.parse_args()
 args.model = args.model.lower()
 CONFIGS = utils.load_yaml(args.config)
@@ -66,8 +68,8 @@ os.makedirs(CONFIGS["MISC"]["TMP"], exist_ok=True)
 logger = Logger(join(CONFIGS["MISC"]["TMP"], "log.txt"))
 
 # model and optimizer
-# model = torchvision.models.resnet.resnet50(pretrained=False)
-model = msnet.MSNet50()
+# model = torchvision.models.resnet.resnet34(pretrained=False)
+model = msnet.MSNet34()
 if CONFIGS["CUDA"]["DATA_PARALLEL"]:
     logger.info("Model Data Parallel")
     model = nn.DataParallel(model).cuda()
@@ -200,7 +202,7 @@ def train(train_loader, epoch):
         output = model(data)
         loss = criterion(output, target)
 
-        # measure accuracy and record los
+        # measure accuracy and record loss
         acc1, acc5 = accuracy(output, target, topk=(1, 5))
         losses.update(loss.item(), data.size(0))
         top1.update(acc1.item(), data.size(0))
