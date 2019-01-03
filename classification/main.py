@@ -24,6 +24,7 @@ from models import msnet
 parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
 parser.add_argument('--config', default='configs/basic.yml', help='path to dataset')
 parser.add_argument('--data', metavar='DIR', default="/media/data2/dataset/ilsvrc12/", help='path to dataset')
+parser.add_argument('--num_classes', default=1000, type=int, metavar='N', help='Number of classes')
 parser.add_argument('--model', metavar='STR', default="resnet18",
                     help='model name (resnet18|squeezenet), default="resnet18"')
 parser.add_argument('--epochs', default=120, type=int, metavar='N',
@@ -46,8 +47,6 @@ parser.add_argument('--print-freq', default=10, type=int,
                     metavar='N', help='print frequency (default: 10)')
 parser.add_argument('--resume', default='', type=str, metavar='PATH',
                     help='path to latest checkpoint (default: none)')
-parser.add_argument('--num_classes', default=1000, type=int, metavar='N',
-                    help='number of classes')
 parser.add_argument('--tmp', help='tmp folder', default='tmp/tmp')
 parser.add_argument('--benchmark', dest='benchmark', action="store_true")
 parser.add_argument('--gpu', default=0, type=int, metavar='N', help='GPU ID')
@@ -68,8 +67,8 @@ os.makedirs(CONFIGS["MISC"]["TMP"], exist_ok=True)
 logger = Logger(join(CONFIGS["MISC"]["TMP"], "log.txt"))
 
 # model and optimizer
-# model = torchvision.models.resnet.resnet34(pretrained=False)
-model = msnet.MSNet34()
+# model = torchvision.models.resnet.resnet34(num_classes=args.num_classes)
+model = msnet.MSNet34(num_classes=args.num_classes)
 if CONFIGS["CUDA"]["DATA_PARALLEL"]:
     logger.info("Model Data Parallel")
     model = nn.DataParallel(model).cuda()
@@ -89,10 +88,9 @@ logger.info("Model details:")
 logger.info(model)
 
 def main():
+
     logger.info(CONFIGS)
-    
     # dataset
-    print(CONFIGS["DATA"]["DIR"])
     assert isdir(CONFIGS["DATA"]["DIR"]), CONFIGS["DATA"]["DIR"]
     start_time = time.time()
     train_loader, val_loader = ilsvrc2012(CONFIGS["DATA"]["DIR"], bs=CONFIGS["OPTIMIZER"]["BS"])
@@ -160,12 +158,12 @@ def main():
         axes[1].set_ylabel("Loss")
 
         plt.tight_layout()
-
-        if CONFIGS["VISDOM"]["VISDOM"]:
-            vis.matplot(fig, win=0)
-
         plt.savefig(join(CONFIGS["MISC"]["TMP"], 'record.pdf'))
         plt.close(fig)
+
+        if CONFIGS["VISDOM"]["VISDOM"]:
+            vis.line(np.array([acc1_record, acc5_record]).transpose(), win=1)
+            vis.line(loss_record, win=2)
 
         record = dict({'acc1': np.array(acc1_record), 'acc5': np.array(acc5_record), 'loss_record': np.array(loss_record)})
         savemat(join(args.tmp, 'precision.mat'), record)
@@ -175,7 +173,7 @@ def main():
         t = (args.epochs - epoch - 1) * t      # remaining seconds
         day= t // 86400
         hour= (t- (day * 86400)) // 3600
-        logger.info("Epoch %d finished, remaining %d days %d hours." % (day, hour))
+        logger.info("Epoch %d finished, remaining %d days %d hours." % (epoch, day, hour))
 
     logger.info("Optimization done!")
 
