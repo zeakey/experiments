@@ -42,6 +42,37 @@ def get_lr(epoch, base_lr, warmup_epochs=5, warmup_start_lr=0.001):
         lr = base_lr * (0.1 ** ((epoch-warmup_epochs) // 30))
     return lr
 
+class LRScheduler(object):
+
+    def __init__(self, base_lr, max_epochs, iters_per_epoch, gamma=0.1, warmup_epochs=5, warmup_start_lr=0.001):
+
+        self.base_lr = base_lr
+        self.max_epochs = max_epochs
+        self.iters_per_epoch = iters_per_epoch
+        self.gamma = gamma
+        self.warmup_epochs = warmup_epochs
+        self.warmup_start_lr = warmup_start_lr
+
+        self._it = 0
+
+
+    def step(self, step=1):
+
+        self._it += step
+
+
+def get_lr_per_iter(epoch, iter, iters_per_epoch, base_lr, stepsize=30, gamma=0.1, warmup_epochs=5, warmup_start_lr=0.001):
+    lr = 0
+    iter = epoch * iters_per_epoch + iter
+    warmup_iters = warmup_epochs * iters_per_epoch
+    stepsize_iters = stepsize * iters_per_epoch
+
+    if iter < warmup_iters:
+        lr = warmup_start_lr + ((base_lr - warmup_start_lr) / warmup_iters) * iter
+    else:
+        lr = base_lr * (0.1 ** ((iter-warmup_iters) // stepsize_iters))
+    return lr
+
 def set_lr(optimizer, lr):
 
     for param_group in optimizer.param_groups:
