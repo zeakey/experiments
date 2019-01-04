@@ -85,6 +85,8 @@ criterion = torch.nn.CrossEntropyLoss()
 logger.info("Model details:")
 logger.info(model)
 
+lr_record = []
+
 def main():
 
     logger.info(CONFIGS)
@@ -117,18 +119,15 @@ def main():
     start_time = time.time()
     for epoch in range(args.start_epoch, args.epochs):
 
-        # adjust learning rate
-        lr = utils.get_lr(epoch, base_lr=CONFIGS["OPTIMIZER"]["LR"])
-        utils.set_lr(optimizer, lr)
-
         # train and evaluate
-        loss_record.append(train(train_loader, epoch))
+        loss = train(train_loader, epoch)
         acc1, acc5 = validate(val_loader)
 
         # record stats
+        loss_record.append(loss)
         acc1_record.append(acc1)
         acc5_record.append(acc5)
-        lr_record.append(lr)
+        lr_record.append(optimizer.param_groups[0]["lr"])
 
         # remember best prec@1 and save checkpoint
         is_best = acc1 > best_acc1
@@ -217,6 +216,10 @@ def train(train_loader, epoch):
         output = model(data)
         loss = criterion(output, target)
 
+        # adjust learning rate
+        lr = utils.get_lr_per_iter(epoch, i, len(train_loader), base_lr=CONFIGS["OPTIMIZER"]["LR"])
+        utils.set_lr(optimizer, lr)
+
         # measure accuracy and record loss
         acc1, acc5 = accuracy(output, target, topk=(1, 5))
         losses.update(loss.item(), data.size(0))
@@ -238,9 +241,11 @@ def train(train_loader, epoch):
                   'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
                   'Train Loss {loss.val:.3f} ({loss.avg:.3f})\t'
                   'Prec@1 {top1.val:.3f} ({top1.avg:.3f})\t'
-                  'Prec@5 {top5.val:.3f} ({top5.avg:.3f})'.format(
+                  'Prec@5 {top5.val:.3f} ({top5.avg:.3f})\t'
+                  'LR: {lr:.5f}'.format(
                    epoch, i, len(train_loader),
-                   batch_time=batch_time, loss=losses, top1=top1, top5=top5))
+                   batch_time=batch_time, loss=losses, top1=top1, top5=top5, lr=lr))
+
     return losses.avg
 
 def validate(val_loader):
