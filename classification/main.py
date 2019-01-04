@@ -1,6 +1,5 @@
 import torch, torchvision
 import torch.nn as nn
-from torch.optim import lr_scheduler
 import torchvision
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
@@ -81,7 +80,6 @@ optimizer = torch.optim.SGD(
     weight_decay=CONFIGS["OPTIMIZER"]["WEIGHT_DECAY"],
     nesterov=False
 )
-scheduler = lr_scheduler.MultiStepLR(optimizer, milestones=[60, 90], gamma=CONFIGS["OPTIMIZER"]["GAMMA"])
 criterion = torch.nn.CrossEntropyLoss()
 
 logger.info("Model details:")
@@ -101,6 +99,7 @@ def main():
     acc1_record = []
     acc5_record = []
     loss_record = []
+    lr_record = []
     # optionally resume from a checkpoint
     if args.resume:
         if isfile(args.resume):
@@ -118,13 +117,18 @@ def main():
     start_time = time.time()
     for epoch in range(args.start_epoch, args.epochs):
 
-        loss_record.append(train(train_loader, epoch))
-        scheduler.step()
+        # adjust learning rate
+        lr = utils.get_lr(epoch, base_lr=CONFIGS["OPTIMIZER"]["LR"])
+        utils.set_lr(optimizer, lr)
 
-        # evaluate on validation set
+        # train and evaluate
+        loss_record.append(train(train_loader, epoch))
         acc1, acc5 = validate(val_loader)
+
+        # record stats
         acc1_record.append(acc1)
         acc5_record.append(acc5)
+        lr_record.append(lr)
 
         # remember best prec@1 and save checkpoint
         is_best = acc1 > best_acc1
@@ -140,9 +144,8 @@ def main():
             'optimizer' : optimizer.state_dict(),
             }, is_best, path=CONFIGS["MISC"]["TMP"])
 
-
         # We continously save records in case of interupt
-        fig, axes = plt.subplots(1, 2, figsize=(8, 4))
+        fig, axes = plt.subplots(1, 3, figsize=(12, 4))
         axes[0].plot(acc1_record, color='r', linewidth=2)
         axes[0].plot(acc5_record, color='g', linewidth=2)
         axes[0].legend(['Top1 Accuracy (Best%.3f)' % max(acc1_record), 'Top5 Accuracy (Best%.3f)' % max(acc5_record)],
@@ -157,15 +160,29 @@ def main():
         axes[1].set_xlabel("Epoch")
         axes[1].set_ylabel("Loss")
 
+        axes[2].plot(lr_record)
+        axes[2].grid(alpha=0.5, linestyle='dotted', linewidth=2, color='black')
+        axes[2].legend(["Learning Rate"], loc="upper right")
+        axes[2].set_xlabel("Epoch")
+        axes[2].set_ylabel("Learning Rate")
+
+
         plt.tight_layout()
         plt.savefig(join(CONFIGS["MISC"]["TMP"], 'record.pdf'))
         plt.close(fig)
 
         if CONFIGS["VISDOM"]["VISDOM"]:
-            vis.line(np.array([acc1_record, acc5_record]).transpose(), win=1)
-            vis.line(loss_record, win=2)
 
-        record = dict({'acc1': np.array(acc1_record), 'acc5': np.array(acc5_record), 'loss_record': np.array(loss_record)})
+            vis.line(np.array([acc1_record, acc5_record]).transpose(),
+                     opts=dict({"legend": ["Top1 accuracy", "Top5 accuracy"], "title": "Accuracy"}), win=1)
+
+            vis.line(loss_record, opts=dict({"title": "Loss"}), win=2)
+
+            vis.line(lr_record, opts=dict({"title": "Learning rate"}), win=3)
+
+        record = dict({'acc1': np.array(acc1_record), 'acc5': np.array(acc5_record),
+                       'loss_record': np.array(loss_record), "lr_record": np.array(lr_record)})
+
         savemat(join(args.tmp, 'precision.mat'), record)
 
         t = time.time() - start_time           # total seconds from starting
