@@ -34,6 +34,14 @@ def merge_config(args, yaml_config):
 
     return yaml_config
 
+def get_lr(epoch, base_lr, warmup_epochs=5, warmup_start_lr=0.001):
+    lr = 0
+    if epoch < warmup_epochs:
+        lr = ((base_lr - warmup_start_lr) / warmup_epochs) * epoch
+    else:
+        lr = base_lr * (0.1 ** ((epoch-warmup_epochs) // 30))
+    return lr
+
 
 from torch.optim.lr_scheduler import _LRScheduler
 class CosineAnnealingLR(_LRScheduler):
