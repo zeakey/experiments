@@ -42,6 +42,11 @@ def get_lr(epoch, base_lr, warmup_epochs=5, warmup_start_lr=0.001):
         lr = base_lr * (0.1 ** ((epoch-warmup_epochs) // 30))
     return lr
 
+def set_lr(optimizer, lr):
+
+    for param_group in optimizer.param_groups:
+        param_group['lr'] = lr
+
 
 from torch.optim.lr_scheduler import _LRScheduler
 class CosineAnnealingLR(_LRScheduler):
