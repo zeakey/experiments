@@ -34,6 +34,14 @@ def merge_config(args, yaml_config):
 
     return yaml_config
 
+class DayHourMinute(object):
+  
+  def __init__(self, seconds):
+      
+      self.days = seconds // 86400
+      self.hours = (seconds- (self.days * 86400)) // 3600
+      self.minutes = (second - self.days * 86400 - self.hours * 3600) // 60
+
 def get_lr(epoch, base_lr, warmup_epochs=5, warmup_start_lr=0.001):
     lr = 0
     if epoch < warmup_epochs:
