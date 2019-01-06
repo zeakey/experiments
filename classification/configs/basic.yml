@@ -8,6 +8,7 @@ OPTIMIZER:
   LR: 0.00001
   GAMMA: 0.5
   BS: 256
+  MOMENTUM: 0.9
 
 CUDA:
   CUDA: True
