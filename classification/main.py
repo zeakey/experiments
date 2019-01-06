@@ -77,8 +77,8 @@ else:
 optimizer = torch.optim.SGD(
     model.parameters(),
     lr=CONFIGS["OPTIMIZER"]["LR"],
-    weight_decay=CONFIGS["OPTIMIZER"]["WEIGHT_DECAY"],
-    nesterov=False
+    momentum=CONFIGS["OPTIMIZER"]["MOMENTUM"],
+    weight_decay=CONFIGS["OPTIMIZER"]["WEIGHT_DECAY"]
 )
 criterion = torch.nn.CrossEntropyLoss()
 
@@ -193,7 +193,7 @@ def main():
 
         t = (args.epochs - epoch - 1) * t      # remaining seconds
 
-        reamining = utils.DayHourMinute(t)
+        remaining = utils.DayHourMinute(t)
 
         logger.info("Epoch %d finished (elapsed %d days %d hours %d minutes,  remaining %d days %d hours %d minutes)." %
             (epoch, elapsed.days, elapsed.hours, elapsed.minutes, remaining.days, remaining.hours, remaining.minutes))
