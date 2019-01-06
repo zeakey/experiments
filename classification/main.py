@@ -174,25 +174,36 @@ def main():
 
             vis.line(np.array([acc1_record, acc5_record]).transpose(),
                      np.arange(len(acc1_record)).reshape(len(acc1_record), 1).repeat(2, axis=1),
-                     opts=dict({"legend": ["Top1 accuracy", "Top5 accuracy"], "title": "Accuracy"}), win=1)
+                     opts=dict({
+                         "legend": ["Top1 accuracy", "Top5 accuracy"],
+                         "title": "Accuracy",
+                         "ytickmin": 0,
+                         "ytickmax": 100,
+                    }), win=1)
 
-            vis.line(loss_record, np.arange(len(loss_record)), opts=dict({"title": "Loss"}), win=2)
+            vis.line(loss_record, np.arange(len(loss_record)),
+                     opts=dict({
+                         "title": "Loss",
+                         "ytickmin": 0,
+                         "fillarea": True,
+                    }), win=2)
 
-            vis.line(lr_record, np.arange(len(lr_record)), opts=dict({"title": "Learning rate"}), win=3)
+            vis.line(lr_record, np.arange(len(lr_record)),
+                     opts=dict({
+                         "title": "Learning rate",
+                         "ytickmax": CONFIGS["OPTIMIZER"]["LR"]}),
+                         "ytickmin": 0}),
+                         win=3)
 
         record = dict({'acc1': np.array(acc1_record), 'acc5': np.array(acc5_record),
                        'loss_record': np.array(loss_record), "lr_record": np.array(lr_record)})
 
-        savemat(join(args.tmp, 'precision.mat'), record)
+        savemat(join(args.tmp, 'record.mat'), record)
 
         t = time.time() - start_time           # total seconds from starting
-
         elapsed = utils.DayHourMinute(t)
-
         t /= (epoch + 1) - args.start_epoch    # seconds per epoch
-
         t = (args.epochs - epoch - 1) * t      # remaining seconds
-
         remaining = utils.DayHourMinute(t)
 
         logger.info("Epoch %d finished (elapsed %d days %d hours %d minutes,  remaining %d days %d hours %d minutes)." %
