@@ -234,8 +234,10 @@ def train(train_loader, epoch):
         output = model(data)
         loss = criterion(output, target)
 
-        # adjust learning rate
-        lr = utils.get_lr_per_iter(epoch, i, len(train_loader), base_lr=CONFIGS["OPTIMIZER"]["LR"])
+        # adjust learning rate?!?jedi=0, ?!?    (epoch, iter, iters_per_epoch, base_lr, stepsize=30, gamma=0.1, *_*warmup_epochs=5*_*, warmup_start_lr=0.001) ?!?jedi?!?
+        lr = utils.get_lr_per_iter(epoch, i, len(train_loader),
+                                   base_lr=CONFIGS["OPTIMIZER"]["LR"],
+                                   warmup_epochs=CONFIGS["OPTIMIZER"]["WARMUP_EPOCHS"])
         utils.set_lr(optimizer, lr)
 
         # measure accuracy and record loss
