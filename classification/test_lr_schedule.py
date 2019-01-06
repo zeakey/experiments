@@ -28,3 +28,21 @@ for i in range(120):
 
 plt.plot(lr_record)
 plt.savefig("lr_scheduler.pdf")
+
+plt.clf()
+lr_record = []
+for i in range(120):
+    lr_record.append(utils.get_lr(i, 0.1, warmup_epochs=0))
+
+plt.plot(lr_record)
+plt.savefig("lr_scheduler1.pdf")
+
+
+plt.clf()
+lr_record = []
+for i in range(120):
+    for j in range(1000):
+        lr_record.append(utils.get_lr_per_iter(i,j, iters_per_epoch=1000, base_lr=0.1, stepsize=30, warmup_epochs=5))
+
+plt.plot(lr_record)
+plt.savefig("lr_scheduler2.pdf")
