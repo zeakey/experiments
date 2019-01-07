@@ -16,43 +16,46 @@ import vltools
 from vltools import Logger
 from vltools import image as vlimage
 from vltools.pytorch import save_checkpoint, AverageMeter, ilsvrc2012, accuracy
-import utils
+import vltools.pytorch as vlpytorch
+import utils, models
 
-from models import msnet
+from models import msnet, resnet
 
 parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
+# arguments from command line
 parser.add_argument('--config', default='configs/basic.yml', help='path to dataset')
-parser.add_argument('--data', metavar='DIR', default="/media/data2/dataset/ilsvrc12/", help='path to dataset')
-parser.add_argument('--num_classes', default=1000, type=int, metavar='N', help='Number of classes')
-parser.add_argument('--model', metavar='STR', default="resnet18",
-                    help='model name (resnet18|squeezenet), default="resnet18"')
 parser.add_argument('--epochs', default=120, type=int, metavar='N',
                     help='number of total epochs to run')
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                     help='manual epoch number (useful on restarts)')
-parser.add_argument('--bs', '--batch-size', default=256, type=int,
-                    metavar='N', help='mini-batch size (default: 256)')
-parser.add_argument('--lr', '--learning-rate', default=0.1, type=float,
-                    metavar='LR', help='initial learning rate')
-parser.add_argument('--stepsize', '--step-size', default=30, type=int,
-                    metavar='SS', help='decrease learning rate every stepsize epochs')
-parser.add_argument('--gamma', default=0.1, type=float,
-                    metavar='GM', help='decrease learning rate by gamma')
-parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
-                    help='momentum')
-parser.add_argument('--weight-decay', '--wd', default=1e-4, type=float,
-                    metavar='W', help='weight decay (default: 1e-4)')
-parser.add_argument('--print-freq', default=10, type=int,
+parser.add_argument('--print-freq', default=20, type=int,
                     metavar='N', help='print frequency (default: 10)')
-parser.add_argument('--resume', default='', type=str, metavar='PATH',
-                    help='path to latest checkpoint (default: none)')
-parser.add_argument('--tmp', help='tmp folder', default='tmp/tmp')
-parser.add_argument('--benchmark', dest='benchmark', action="store_true")
-parser.add_argument('--gpu', default=0, type=int, metavar='N', help='GPU ID')
-
+parser.add_argument('--model', metavar='STR', default="msnet34", help='model')
 parser.add_argument('--visport', default=8097, type=int, metavar='N', help='Visdom port')
+
+# by default, arguments bellow will come from a config file
+parser.add_argument('--data', metavar='DIR', default=None, help='path to dataset')
+parser.add_argument('--num_classes', default=None, type=int, metavar='N', help='Number of classes')
+parser.add_argument('--bs', '--batch-size', default=None, type=int,
+                    metavar='N', help='mini-batch size')
+parser.add_argument('--lr', '--learning-rate', default=None, type=float,
+                    metavar='LR', help='initial learning rate')
+parser.add_argument('--stepsize', '--step-size', default=None, type=int,
+                    metavar='SS', help='decrease learning rate every stepsize epochs')
+parser.add_argument('--gamma', default=None, type=float,
+                    metavar='GM', help='decrease learning rate by gamma')
+parser.add_argument('--momentum', default=None, type=float, metavar='M',
+                    help='momentum')
+parser.add_argument('--weight-decay', '--wd', default=None, type=float,
+                    metavar='W', help='weight decay')
+parser.add_argument('--resume', default=None, type=str, metavar='PATH',
+                    help='path to latest checkpoint')
+parser.add_argument('--tmp', help='tmp folder', default=None)
+parser.add_argument('--benchmark', dest='benchmark', action="store_true")
+parser.add_argument('--gpu', default=None, type=int, metavar='N', help='GPU ID')
+
+
 args = parser.parse_args()
-args.model = args.model.lower()
 CONFIGS = utils.load_yaml(args.config)
 CONFIGS = utils.merge_config(args, CONFIGS)
 
@@ -66,8 +69,21 @@ os.makedirs(CONFIGS["MISC"]["TMP"], exist_ok=True)
 logger = Logger(join(CONFIGS["MISC"]["TMP"], "log.txt"))
 
 # model and optimizer
-# model = torchvision.models.resnet.resnet34(num_classes=args.num_classes)
-model = msnet.MSNet34(num_classes=args.num_classes)
+if args.model == "resnet34":
+    model = models.resnet.resnet34(num_classes=CONFIGS["DATA"]["NUM_CLASSES"])
+
+elif args.model == "resnet50":
+    model = models.resnet.resnet50(num_classes=CONFIGS["DATA"]["NUM_CLASSES"])
+
+elif args.model == "msnet34":
+    model = msnet.MSNet34(num_classes=CONFIGS["DATA"]["NUM_CLASSES"])
+
+elif args.model == "msnet50":
+    model = msnet.MSNet50(num_classes=CONFIGS["DATA"]["NUM_CLASSES"])
+
+else:
+    raise ValueError("Unknown model: %s" % args.model)
+
 if CONFIGS["CUDA"]["DATA_PARALLEL"]:
     logger.info("Model Data Parallel")
     model = nn.DataParallel(model).cuda()
@@ -80,20 +96,29 @@ optimizer = torch.optim.SGD(
     momentum=CONFIGS["OPTIMIZER"]["MOMENTUM"],
     weight_decay=CONFIGS["OPTIMIZER"]["WEIGHT_DECAY"]
 )
-criterion = torch.nn.CrossEntropyLoss()
-
 logger.info("Model details:")
 logger.info(model)
+logger.info("Optimizer details:")
+logger.info(optimizer)
 
-lr_record = []
+# loss function
+criterion = torch.nn.CrossEntropyLoss()
 
 def main():
 
     logger.info(CONFIGS)
+
     # dataset
     assert isdir(CONFIGS["DATA"]["DIR"]), CONFIGS["DATA"]["DIR"]
     start_time = time.time()
-    train_loader, val_loader = ilsvrc2012(CONFIGS["DATA"]["DIR"], bs=CONFIGS["OPTIMIZER"]["BS"])
+
+    if CONFIGS["DATA"]["DATASET"] == "ilsvrc2012":
+        train_loader, val_loader = ilsvrc2012(CONFIGS["DATA"]["DIR"], bs=CONFIGS["DATA"]["BS"])
+    elif CONFIGS["DATA"]["DATASET"] == "cifar10":
+        train_loader, val_loader = vlpytorch.cifar10(CONFIGS["DATA"]["DIR"], bs=CONFIGS["DATA"]["BS"])
+    else:
+        raise ValueError("Unknown dataset: %s" % CONFIGS["DATA"]["DATASET"])
+
     logger.info("Data loading done, %.3f sec elapsed." % (time.time() - start_time))
 
     # records
@@ -191,7 +216,7 @@ def main():
             vis.line(lr_record, np.arange(len(lr_record)),
                      opts=dict({
                          "title": "Learning rate",
-                         "ytickmax": CONFIGS["OPTIMIZER"]["LR"]}),
+                         "ytickmax": CONFIGS["OPTIMIZER"]["LR"],
                          "ytickmin": 0}),
                          win=3)
 
@@ -201,13 +226,16 @@ def main():
         savemat(join(args.tmp, 'record.mat'), record)
 
         t = time.time() - start_time           # total seconds from starting
+        hours_per_epoch = (t // 3600) / (epoch + 1 - args.start_epoch)
         elapsed = utils.DayHourMinute(t)
         t /= (epoch + 1) - args.start_epoch    # seconds per epoch
         t = (args.epochs - epoch - 1) * t      # remaining seconds
         remaining = utils.DayHourMinute(t)
 
-        logger.info("Epoch %d finished (elapsed %d days %d hours %d minutes,  remaining %d days %d hours %d minutes)." %
-            (epoch, elapsed.days, elapsed.hours, elapsed.minutes, remaining.days, remaining.hours, remaining.minutes))
+        logger.info("Epoch {0}/{1} finishied, {2} hours per epoch on average.\t"
+                    "Elapsed {elapsed.days:d} days {elapsed.hours:d} hours {elapsed.minutes:d} minutes.\t"
+                    "Remaining {remaining.days:d} days {remaining.hours:d} hours {remaining.minutes:d} minutes.".format(
+                    epoch, args.epochs, hours_per_epoch, elapsed=elapsed, remaining=remaining))
 
     logger.info("Optimization done!")
 
@@ -234,7 +262,7 @@ def train(train_loader, epoch):
         output = model(data)
         loss = criterion(output, target)
 
-        # adjust learning rate?!?jedi=0, ?!?    (epoch, iter, iters_per_epoch, base_lr, stepsize=30, gamma=0.1, *_*warmup_epochs=5*_*, warmup_start_lr=0.001) ?!?jedi?!?
+        # adjust learning rate
         lr = utils.get_lr_per_iter(epoch, i, len(train_loader),
                                    base_lr=CONFIGS["OPTIMIZER"]["LR"],
                                    warmup_epochs=CONFIGS["OPTIMIZER"]["WARMUP_EPOCHS"])
