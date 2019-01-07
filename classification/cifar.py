@@ -204,6 +204,7 @@ def main():
                          "title": "Accuracy",
                          "ytickmin": 0,
                          "ytickmax": 100,
+                         "xtickstep": 1
                     }), win=1)
 
             vis.line(loss_record, np.arange(len(loss_record)),
@@ -211,14 +212,16 @@ def main():
                          "title": "Loss",
                          "ytickmin": 0,
                          "fillarea": True,
+                         "xtickstep": 1
                     }), win=2)
 
             vis.line(lr_record, np.arange(len(lr_record)),
                      opts=dict({
                          "title": "Learning rate",
                          "ytickmax": CONFIGS["OPTIMIZER"]["LR"],
-                         "ytickmin": 0}),
-                         win=3)
+                         "ytickmin": 0,
+                         "xtickstep": 1
+                    }), win=3)
 
         record = dict({'acc1': np.array(acc1_record), 'acc5': np.array(acc5_record),
                        'loss_record': np.array(loss_record), "lr_record": np.array(lr_record)})
