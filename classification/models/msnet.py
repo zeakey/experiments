@@ -94,14 +94,14 @@ class MSModule(nn.Module):
         self.inplanes = max(planes) * block.expansion
 
         if stride[2] == 2:
-            self.res = BasicBlock(self.inplanes, self.inplanes, stride=stride[2],
+            self.res = block(self.inplanes, self.inplanes // block.expansion, stride=stride[2],
                         downsample=nn.Sequential(
                             nn.AvgPool2d(kernel_size=2, stride=2),
                             conv1x1(self.inplanes, self.inplanes),
                             nn.BatchNorm2d(self.inplanes)
                         ))
         elif stride[2] == 1:
-            self.res = BasicBlock(self.inplanes, self.inplanes, stride=stride[2])
+            self.res = block(self.inplanes, self.inplanes // block.expansion, stride=stride[2])
         else:
             raise ValueError("stride = %d" % stride[2])
 
