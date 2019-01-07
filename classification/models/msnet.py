@@ -6,6 +6,21 @@ def conv1x1(in_planes, out_planes, stride=1):
     """1x1 convolution"""
     return nn.Conv2d(in_planes, out_planes, kernel_size=1, stride=stride, bias=False)
 
+def cifar_input():
+    return nn.Sequential(
+        nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1, bias=False),
+        nn.ReLU(inplace=True),
+        nn.BatchNorm2d(64)
+    )
+
+def resnet_input():
+    return nn.Sequential(
+        nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3, bias=False),
+        nn.ReLU(inplace=True),
+        nn.BatchNorm2d(64),
+        MaxPool2d(kernel_size=3, stride=2, padding=1)
+    )
+
 
 class BasicBlock(nn.Module):
     expansion = 1
@@ -143,17 +158,17 @@ class MSModule(nn.Module):
 
 class MSNet34(nn.Module):
 
-    def __init__(self, block=BasicBlock, num_classes=1000):
+    def __init__(self, block=BasicBlock, num_classes=1000, cifar=False):
 
         super(MSNet34, self).__init__()
         self.inplanes = 64
-        self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3,
-                               bias=False)
-        self.bn1 = nn.BatchNorm2d(64)
-        self.relu = nn.ReLU(inplace=True)
+
+        if cifar:
+            self.conv1 = cifar_input()
+        else:
+            self.conv1 = resnet_input()
 
         self.conv2a = conv3x3(64, 64, stride=2)
-
         self.conv2b1 = conv3x3(64, 32, stride=1)
         self.conv2b2 = conv3x3(32, 32, stride=2)
         self.conv2b3 = conv1x1(32, 64, stride=1)
@@ -213,8 +228,6 @@ class MSNet34(nn.Module):
 
     def forward(self, x):
         x = self.conv1(x)
-        x = self.bn1(x)
-        x = self.relu(x)
 
         x2a = self.conv2a(x)
         x2b = self.conv2b1(x)
@@ -235,17 +248,17 @@ class MSNet34(nn.Module):
 
 class MSNet50(nn.Module):
 
-    def __init__(self, block=Bottleneck, num_classes=1000):
+    def __init__(self, block=Bottleneck, num_classes=1000, cifar=False):
 
         super(MSNet50, self).__init__()
         self.inplanes = 64
-        self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3,
-                               bias=False)
-        self.bn1 = nn.BatchNorm2d(64)
-        self.relu = nn.ReLU(inplace=True)
+
+        if cifar:
+            self.conv1 = cifar_input()
+        else:
+            self.conv1 = resnet_input()
 
         self.conv2a = conv3x3(64, 64, stride=2)
-        
         self.conv2b1 = conv3x3(64, 32, stride=1)
         self.conv2b2 = conv3x3(32, 32, stride=2)
         self.conv2b3 = conv1x1(32, 64, stride=1)
@@ -303,8 +316,6 @@ class MSNet50(nn.Module):
 
     def forward(self, x):
         x = self.conv1(x)
-        x = self.bn1(x)
-        x = self.relu(x)
 
         x2a = self.conv2a(x)
         x2b = self.conv2b1(x)
