@@ -12,24 +12,27 @@ def load_yaml(yaml_file):
 
 def merge_config(args, yaml_config):
 
-    if hasattr(args, "data") and args.data != yaml_config["DATA"]["DIR"]:
+    if hasattr(args, "data") and args.data and args.data != yaml_config["DATA"]["DIR"]:
         yaml_config["DATA"]["DIR"] = args.data
 
-    if hasattr(args, "tmp") and args.tmp != yaml_config["MISC"]["TMP"]:
+    if hasattr(args, "bs") and args.bs and args.bs != yaml_config["DATA"]["BS"]:
+        yaml_config["DATA"]["BS"] = args.bs
+
+    if hasattr(args, "model") and args.model and args.model != yaml_config["MODEL"]["MODEL"]:
+        yaml_config["MODEL"]["MODEL"] = args.model
+
+    if hasattr(args, "tmp") and args.tmp and args.tmp != yaml_config["MISC"]["TMP"]:
         yaml_config["MISC"]["TMP"] = args.tmp
 
     # Optimizer
-    if hasattr(args, "bs") and args.data != yaml_config["OPTIMIZER"]["BS"]:
-        yaml_config["OPTIMIZER"]["BS"] = args.bs
-
-    if hasattr(args, "lr") and args.lr != yaml_config["OPTIMIZER"]["LR"]:
+    if hasattr(args, "lr") and args.lr and args.lr != yaml_config["OPTIMIZER"]["LR"]:
         yaml_config["OPTIMIZER"]["LR"] = args.lr
-    
+
     # CUDA
-    if hasattr(args, "gpu") and args.gpu != yaml_config["CUDA"]["GPU_ID"]:
+    if hasattr(args, "gpu") and args.gpu and args.gpu != yaml_config["CUDA"]["GPU_ID"]:
         yaml_config["CUDA"]["GPU_ID"] = args.gpu
     
-    if hasattr(args, "visport") and args.gpu != yaml_config["VISDOM"]["PORT"]:
+    if hasattr(args, "visport") and args.visport != yaml_config["VISDOM"]["PORT"]:
         yaml_config["VISDOM"]["PORT"] = args.visport
 
     return yaml_config
@@ -38,9 +41,9 @@ class DayHourMinute(object):
   
   def __init__(self, seconds):
       
-      self.days = seconds // 86400
-      self.hours = (seconds- (self.days * 86400)) // 3600
-      self.minutes = (seconds - self.days * 86400 - self.hours * 3600) // 60
+      self.days = int(seconds // 86400)
+      self.hours = int((seconds- (self.days * 86400)) // 3600)
+      self.minutes = int((seconds - self.days * 86400 - self.hours * 3600) // 60)
 
 def get_lr(epoch, base_lr, warmup_epochs=5, warmup_start_lr=0.001):
     lr = 0
