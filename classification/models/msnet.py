@@ -90,16 +90,20 @@ class MSModule(nn.Module):
 
         if planes[0] != planes[1]:
             self.match = conv1x1(min(planes) * block.expansion, max(planes) * block.expansion)
+
         self.inplanes = max(planes) * block.expansion
 
-        if stride[2] != 1:
+        if stride[2] == 2:
             self.res = BasicBlock(self.inplanes, self.inplanes, stride=stride[2],
                         downsample=nn.Sequential(
-                            conv1x1(self.inplanes, self.inplanes, stride[2]),
+                            nn.AvgPool2d(kernel_size=2, stride=2),
+                            conv1x1(self.inplanes, self.inplanes),
                             nn.BatchNorm2d(self.inplanes)
                         ))
-        else:
+        elif stride[2] == 1:
             self.res = BasicBlock(self.inplanes, self.inplanes, stride=stride[2])
+        else:
+            raise ValueError("stride = %d" % stride[2])
 
     def _make_layer(self, block, inplanes, planes, blocks, stride=1):
         downsample = None
