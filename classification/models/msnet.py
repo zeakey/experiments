@@ -85,7 +85,6 @@ class MSModule(nn.Module):
 
         self.stream0 = self._make_layer(block, inplanes[0], planes[0], blocks[0], stride=stride[0])
         self.stream1 = self._make_layer(block, inplanes[1], planes[1], blocks[1], stride=stride[1])
-        
 
         self.match = None
 
@@ -105,10 +104,20 @@ class MSModule(nn.Module):
     def _make_layer(self, block, inplanes, planes, blocks, stride=1):
         downsample = None
         if stride != 1 or inplanes != planes * block.expansion:
-            downsample = nn.Sequential(
-                conv1x1(inplanes, planes * block.expansion, stride),
-                nn.BatchNorm2d(planes * block.expansion),
-            )
+            if stride == 2:
+                downsample = nn.Sequential(
+                    nn.AvgPool2d(kernel_size=2,stride=stride, ceil_mode=True),
+                    conv1x1(inplanes, planes * block.expansion),
+                    nn.BatchNorm2d(planes * block.expansion),
+                )
+            elif stride == 1:
+                downsample = nn.Sequential(
+                    conv1x1(inplanes, planes * block.expansion, stride=stride),
+                    nn.BatchNorm2d(planes * block.expansion),
+                )
+            else:
+                raise ValueError("stride=%d" % stride)
+
 
         layers = []
         layers.append(block(inplanes, planes, stride, downsample))
@@ -158,10 +167,19 @@ class MSNet34(nn.Module):
     def _make_layer(self, block, planes, blocks, stride=1):
         downsample = None
         if stride != 1 or self.inplanes != planes * block.expansion:
-            downsample = nn.Sequential(
-                conv1x1(self.inplanes, planes * block.expansion, stride),
-                nn.BatchNorm2d(planes * block.expansion),
-            )
+            if stride == 2:
+                downsample = nn.Sequential(
+                    nn.AvgPool2d(kernel_size=2,stride=stride, ceil_mode=True),
+                    conv1x1(self.inplanes, planes * block.expansion),
+                    nn.BatchNorm2d(planes * block.expansion),
+                )
+            elif stride == 1:
+                downsample = nn.Sequential(
+                    conv1x1(self.inplanes, planes * block.expansion, stride=stride),
+                    nn.BatchNorm2d(planes * block.expansion),
+                )
+            else:
+                raise ValueError("stride=%d" % stride)
 
         layers = []
         layers.append(block(self.inplanes, planes, stride, downsample))
@@ -241,10 +259,19 @@ class MSNet50(nn.Module):
     def _make_layer(self, block, planes, blocks, stride=1):
         downsample = None
         if stride != 1 or self.inplanes != planes * block.expansion:
-            downsample = nn.Sequential(
-                conv1x1(self.inplanes, planes * block.expansion, stride),
-                nn.BatchNorm2d(planes * block.expansion),
-            )
+            if stride == 2:
+                downsample = nn.Sequential(
+                    nn.AvgPool2d(kernel_size=2,stride=stride, ceil_mode=True),
+                    conv1x1(self.inplanes, planes * block.expansion),
+                    nn.BatchNorm2d(planes * block.expansion),
+                )
+            elif stride == 1:
+                downsample = nn.Sequential(
+                    conv1x1(self.inplanes, planes * block.expansion, stride=stride),
+                    nn.BatchNorm2d(planes * block.expansion),
+                )
+            else:
+                raise ValueError("stride=%d" % stride)
 
         layers = []
         layers.append(block(self.inplanes, planes, stride, downsample))
