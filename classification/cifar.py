@@ -77,10 +77,10 @@ elif args.model == "resnet50":
     model = models.resnet.resnet50(num_classes=CONFIGS["DATA"]["NUM_CLASSES"])
 
 elif args.model == "msnet34":
-    model = msnet.MSNet34(num_classes=CONFIGS["DATA"]["NUM_CLASSES"])
+    model = msnet.MSNet34(num_classes=CONFIGS["DATA"]["NUM_CLASSES"], cifar=True)
 
 elif args.model == "msnet50":
-    model = msnet.MSNet50(num_classes=CONFIGS["DATA"]["NUM_CLASSES"])
+    model = msnet.MSNet50(num_classes=CONFIGS["DATA"]["NUM_CLASSES"], cifar10=True)
 
 else:
     raise ValueError("Unknown model: %s" % args.model)
@@ -97,7 +97,7 @@ optimizer = torch.optim.SGD(
     momentum=CONFIGS["OPTIMIZER"]["MOMENTUM"],
     weight_decay=CONFIGS["OPTIMIZER"]["WEIGHT_DECAY"]
 )
-scheduler = lr_scheduler.MultiStepLR(optimizer, milestones=[90, 135], gamma=CONFIGS["OPTIMIZER"]["GAMMA"])
+scheduler = lr_scheduler.MultiStepLR(optimizer, milestones=CONFIGS["OPTIMIZER"]["MILE_STONES"], gamma=CONFIGS["OPTIMIZER"]["GAMMA"])
 logger.info("Model details:")
 logger.info(model)
 logger.info("Optimizer details:")
