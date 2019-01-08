@@ -109,14 +109,14 @@ class MSModule(nn.Module):
         self.inplanes = max(planes) * block.expansion
 
         if stride[2] == 2:
-            self.res = block(self.inplanes, self.inplanes // block.expansion, stride=stride[2],
+            self.fuse = block(self.inplanes, self.inplanes // block.expansion, stride=stride[2],
                         downsample=nn.Sequential(
                             nn.AvgPool2d(kernel_size=2, stride=2),
                             conv1x1(self.inplanes, self.inplanes),
                             nn.BatchNorm2d(self.inplanes)
                         ))
         elif stride[2] == 1:
-            self.res = block(self.inplanes, self.inplanes // block.expansion, stride=stride[2])
+            self.fuse = block(self.inplanes, self.inplanes // block.expansion, stride=stride[2])
         else:
             raise ValueError("stride = %d" % stride[2])
 
@@ -154,7 +154,7 @@ class MSModule(nn.Module):
             assert (self.stride[0] / self.stride[1]) % 2 == 0
             stream0 = nn.functional.interpolate(stream0, scale_factor=2, mode="bilinear", align_corners=True)
 
-        return self.res(stream0 + stream1)
+        return self.fuse(stream0 + stream1)
 
 class MSNet34(nn.Module):
 
