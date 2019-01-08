@@ -70,8 +70,11 @@ os.makedirs(CONFIGS["MISC"]["TMP"], exist_ok=True)
 logger = Logger(join(CONFIGS["MISC"]["TMP"], "log.txt"))
 
 # model and optimizer
-if args.model == "resnet34":
-    model = models.resnet.resnet34(num_classes=CONFIGS["DATA"]["NUM_CLASSES"])
+if args.model == "resnet18":
+    model = models.resnet.resnet18(num_classes=CONFIGS["DATA"]["NUM_CLASSES"], cifar=True)
+
+elif args.model == "resnet34":
+    model = models.resnet.resnet34(num_classes=CONFIGS["DATA"]["NUM_CLASSES"], cifar=True)
 
 elif args.model == "resnet50":
     model = models.resnet.resnet50(num_classes=CONFIGS["DATA"]["NUM_CLASSES"])
@@ -226,7 +229,7 @@ def main():
         record = dict({'acc1': np.array(acc1_record), 'acc5': np.array(acc5_record),
                        'loss_record': np.array(loss_record), "lr_record": np.array(lr_record)})
 
-        savemat(join(args.tmp, 'record.mat'), record)
+        savemat(join(CONFIGS["MISC"]["TMP"], 'record.mat'), record)
 
         t = time.time() - start_time           # total seconds from starting
         hours_per_epoch = (t // 3600) / (epoch + 1 - args.start_epoch)
