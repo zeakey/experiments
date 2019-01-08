@@ -37,9 +37,9 @@ logger = Logger(join(args.tmp, "log.txt"))
 # model and optimizer
 
 if args.model == "relubn":
-    model = resnet_relubn.resnet18().cuda()
+    model = resnet_relubn.resnet18().cuda(device=args.gpu)
 elif args.model == "bnrelu":
-    model = resnet_bnrelu.resnet18().cuda()
+    model = resnet_bnrelu.resnet18().cuda(device=args.gpu)
 else:
     raise ValueError("Unknown model: %s" % args.model)
 # model = resnet_relubn.resnet18()
@@ -221,7 +221,7 @@ def validate(val_loader):
             # measure elapsed time
             batch_time.update(time.time() - end)
             end = time.time()
-            if i % args.print_freq == 0:
+            if i % 20 == 0:
                 logger.info('Test: [{0}/{1}]\t'
                       'Test Loss {loss.val:.3f} (avg={loss.avg:.3f})\t'
                       'Prec@1 {top1.val:.3f} (avg={top1.avg:.3f})\t'
