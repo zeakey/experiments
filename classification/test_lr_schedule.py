@@ -4,8 +4,16 @@ import matplotlib
 matplotlib.use("agg")
 import matplotlib.pyplot as plt
 import utils
-model = torchvision.models.resnet.resnet18()
+from models import msnet
+model = msnet.MSNet50()
 optimizer = torch.optim.SGD(model.parameters(), lr=0.1)
+print(model)
+print(optimizer)
+
+with torch.no_grad():
+    data = torch.zeros((1, 3, 224, 224))
+    output = model(data)
+print(output.mean())
 
 # lr_scheduler0 = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=30, eta_min=0)
 # lr_scheduler1 = torch.optim.lr_scheduler.StepLR(optimizer, step_size=30, gamma=0.5)
