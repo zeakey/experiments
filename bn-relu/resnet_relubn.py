@@ -32,8 +32,8 @@ class BasicBlock(nn.Module):
     def __init__(self, inplanes, planes, stride=1, downsample=None):
         super(BasicBlock, self).__init__()
         self.conv1 = conv3x3(inplanes, planes, stride)
-        self.bn1 = nn.BatchNorm2d(planes)
         self.relu = nn.ReLU(inplace=False)
+        self.bn1 = nn.BatchNorm2d(planes)
         self.conv2 = conv3x3(planes, planes)
         self.bn2 = nn.BatchNorm2d(planes)
         self.downsample = downsample
@@ -104,8 +104,8 @@ class ResNet(nn.Module):
         self.inplanes = 64
         self.conv1 = nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1,
                                bias=False)
-        self.bn1 = nn.BatchNorm2d(64)
         self.relu = nn.ReLU(inplace=False)
+        self.bn1 = nn.BatchNorm2d(64)
 
         self.layer1 = self._make_layer(block, 64, layers[0])
         self.layer2 = self._make_layer(block, 128, layers[1], stride=2)
@@ -151,7 +151,6 @@ class ResNet(nn.Module):
         x = self.conv1(x)
         x = self.relu(x)
         x = self.bn1(x)
-
 
         x = self.layer1(x)
         x = self.layer2(x)
