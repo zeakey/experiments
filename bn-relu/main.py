@@ -16,6 +16,7 @@ from os.path import join, split, isdir, isfile, dirname, abspath
 import vltools
 from vltools import Logger
 from vltools import image as vlimage
+from vltools import utils as vlutils
 from vltools.pytorch import save_checkpoint, AverageMeter, ilsvrc2012, accuracy
 import vltools.pytorch as vlpytorch
 import resnet_bnrelu, resnet_relubn
@@ -137,10 +138,10 @@ def main():
 
         t = time.time() - start_time           # total seconds from starting
         hours_per_epoch = (t // 3600) / (epoch + 1 - args.start_epoch)
-        elapsed = utils.DayHourMinute(t)
+        elapsed = vlutils.DayHourMinute(t)
         t /= (epoch + 1) - args.start_epoch    # seconds per epoch
         t = (args.epochs - epoch - 1) * t      # remaining seconds
-        remaining = utils.DayHourMinute(t)
+        remaining = vlutils.DayHourMinute(t)
 
         logger.info("Epoch {0}/{1} finishied, {2} hours per epoch on average.\t"
                     "Elapsed {elapsed.days:d} days {elapsed.hours:d} hours {elapsed.minutes:d} minutes.\t"
