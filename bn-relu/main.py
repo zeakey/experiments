@@ -10,7 +10,7 @@ from scipy.io import savemat
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-import os, sys, argparse, time, shutil, visdom
+import os, sys, argparse, time, shutil
 from os.path import join, split, isdir, isfile, dirname, abspath
 
 import vltools
@@ -24,7 +24,7 @@ import resnet_bnrelu, resnet_relubn
 parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
 parser.add_argument('--model', help='model type: relubn | bnrelu', default="relubn")
 parser.add_argument('--start_epoch', default=0, type=int, metavar='N', help='Start epoch')
-parser.add_argument('--epochs', default=180, type=int, metavar='N', help='Maximal epochs')
+parser.add_argument('--epochs', default=350, type=int, metavar='N', help='Maximal epochs')
 parser.add_argument('--tmp', help='tmp folder', default=None)
 parser.add_argument('--benchmark', dest='benchmark', action="store_true")
 parser.add_argument('--gpu', default=None, type=int, metavar='N', help='GPU ID')
@@ -40,9 +40,9 @@ logger = Logger(join(args.tmp, "log.txt"))
 # model and optimizer
 
 if args.model == "relubn":
-    model = resnet_relubn.resnet18().cuda(device=args.gpu)
+    model = resnet_relubn.resnet18(num_classes=100).cuda(device=args.gpu)
 elif args.model == "bnrelu":
-    model = resnet_bnrelu.resnet18().cuda(device=args.gpu)
+    model = resnet_bnrelu.resnet18(num_classes=100).cuda(device=args.gpu)
 else:
     raise ValueError("Unknown model: %s" % args.model)
 # model = resnet_relubn.resnet18()
@@ -53,7 +53,7 @@ optimizer = torch.optim.SGD(
     momentum=0.9,
     weight_decay=0.0001
 )
-scheduler = lr_scheduler.MultiStepLR(optimizer, milestones=[90, 135], gamma=0.1)
+scheduler = lr_scheduler.MultiStepLR(optimizer, milestones=[150, 250], gamma=0.1)
 logger.info("Model details:")
 logger.info(model)
 logger.info("Optimizer details:")
@@ -65,7 +65,7 @@ criterion = torch.nn.CrossEntropyLoss()
 def main():
 
     # dataset
-    train_loader, val_loader = vlpytorch.cifar10('/home/kai/.torch/data', 128)
+    train_loader, val_loader = vlpytorch.cifar100('/home/kai/.torch/data', 128)
 
     # records
     best_acc1 = 0
@@ -129,6 +129,7 @@ def main():
 
         plt.tight_layout()
         plt.savefig(join(args.tmp, 'record.pdf'))
+        plt.savefig(join(args.tmp, 'record.svg'))
         plt.close(fig)
 
         record = dict({'acc1': np.array(acc1_record), 'acc5': np.array(acc5_record),
