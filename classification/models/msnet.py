@@ -9,16 +9,16 @@ def conv1x1(in_planes, out_planes, stride=1):
 def cifar_input():
     return nn.Sequential(
         nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1, bias=False),
-        nn.ReLU(inplace=True),
-        nn.BatchNorm2d(64)
+        nn.BatchNorm2d(64),
+        nn.ReLU(inplace=True)
     )
 
 def resnet_input():
     return nn.Sequential(
         nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3, bias=False),
-        nn.ReLU(inplace=True),
         nn.BatchNorm2d(64),
-        MaxPool2d(kernel_size=3, stride=2, padding=1)
+        nn.ReLU(inplace=True),
+        # nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
     )
 
 
