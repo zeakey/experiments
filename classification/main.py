@@ -56,6 +56,8 @@ parser.add_argument('--gpu', default=None, type=int, metavar='N', help='GPU ID')
 
 
 args = parser.parse_args()
+
+assert isfile(args.config)
 CONFIGS = utils.load_yaml(args.config)
 CONFIGS = utils.merge_config(args, CONFIGS)
 
@@ -76,10 +78,12 @@ elif args.model == "resnet50":
     model = models.resnet.resnet50(num_classes=CONFIGS["DATA"]["NUM_CLASSES"])
 
 elif args.model == "msnet34":
-    model = msnet.MSNet34(num_classes=CONFIGS["DATA"]["NUM_CLASSES"])
+    model = msnet.MSNet34(num_classes=CONFIGS["DATA"]["NUM_CLASSES"],
+                          cifar="cifar" in CONFIGS["DATA"]["DATASET"])
 
 elif args.model == "msnet50":
-    model = msnet.MSNet50(num_classes=CONFIGS["DATA"]["NUM_CLASSES"])
+    model = msnet.MSNet50(num_classes=CONFIGS["DATA"]["NUM_CLASSES"],
+                          cifar="cifar" in CONFIGS["DATA"]["DATASET"])
 
 else:
     raise ValueError("Unknown model: %s" % args.model)
@@ -117,7 +121,7 @@ def main():
     elif CONFIGS["DATA"]["DATASET"] == "cifar10":
         train_loader, val_loader = vlpytorch.cifar10(CONFIGS["DATA"]["DIR"], bs=CONFIGS["DATA"]["BS"])
     else:
-        raise ValueError("Unknown dataset: %s" % CONFIGS["DATA"]["DATASET"])
+        raise ValueError("Unknown dataset: %s. (Supported datasets: ilsvrc2012 | cifar10 | cifar100)" % CONFIGS["DATA"]["DATASET"])
 
     logger.info("Data loading done, %.3f sec elapsed." % (time.time() - start_time))
 
@@ -223,7 +227,7 @@ def main():
         record = dict({'acc1': np.array(acc1_record), 'acc5': np.array(acc5_record),
                        'loss_record': np.array(loss_record), "lr_record": np.array(lr_record)})
 
-        savemat(join(args.tmp, 'record.mat'), record)
+        savemat(join(CONFIGS["MISC"]["TMP"], 'record.mat'), record)
 
         t = time.time() - start_time           # total seconds from starting
         hours_per_epoch = (t // 3600) / (epoch + 1 - args.start_epoch)
