@@ -22,6 +22,8 @@ import resnet_bnrelu, resnet_relubn
 
 parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
 parser.add_argument('--model', help='model type: relubn | bnrelu', default="relubn")
+parser.add_argument('--start_epoch', default=0, type=int, metavar='N', help='Start epoch')
+parser.add_argument('--epochs', default=180, type=int, metavar='N', help='Maximal epochs')
 parser.add_argument('--tmp', help='tmp folder', default=None)
 parser.add_argument('--benchmark', dest='benchmark', action="store_true")
 parser.add_argument('--gpu', default=None, type=int, metavar='N', help='GPU ID')
