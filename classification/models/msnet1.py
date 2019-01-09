@@ -21,9 +21,22 @@ def resnet_input():
         # nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
     )
 
+def downsample2(in_channels):
+    return nn.Sequential(
+        nn.AvgPool2d(kernel_size=2, stride=2),
+        nn.Conv2d(in_channels=in_channels, out_channels=in_channels, kernel_size=1, bias=False),
+        nn.BatchNorm2d(in_channels),
+        nn.ReLU(inplace=True)
+    )
+
 class MSModule(nn.Module):
 
     def __init__(self, block_high, block_low, block_merge=None, stride=2):
+        """
+        block_high: high resolution block, usually it contains more layers
+        block_low: low resolution block, usually it contains less layers compared to block_high
+        block_merge: a block used to merge high-resolution features and low-resolution features
+        """
         super(MSModule, self).__init__()
         self.block_high = block_high
         self.block_low = block_low
@@ -87,7 +100,11 @@ class MSNet(nn.Module):
         # Module 2
         planes = 64
         block_high = self._make_layer(block, self.inplanes, planes, blocks=1)
-        block_low = self._make_layer(block, self.inplanes, planes, blocks=2, stride=2)
+        block_low = self._make_layer(block, self.inplanes, planes, blocks=2)
+        block_low = nn.Sequential(
+            downsample2(self.inplanes),
+            block_low
+        )
 
         self.inplanes = planes*block.expansion
         block_merge = self._make_layer(block, self.inplanes, planes, blocks=1, stride=2)
@@ -97,7 +114,11 @@ class MSNet(nn.Module):
         # Module 3
         planes = 128
         block_high = self._make_layer(block, self.inplanes, planes, blocks=1)
-        block_low = self._make_layer(block, self.inplanes, planes, blocks=2, stride=2)
+        block_low = self._make_layer(block, self.inplanes, planes, blocks=2)
+        block_low = nn.Sequential(
+            downsample2(self.inplanes),
+            block_low
+        )
 
         self.inplanes = planes*block.expansion
         block_merge = self._make_layer(block, self.inplanes, planes, blocks=1, stride=2)
@@ -107,7 +128,11 @@ class MSNet(nn.Module):
         # Module 4
         planes = 256
         block_high = self._make_layer(block, self.inplanes, planes, blocks=1)
-        block_low = self._make_layer(block, self.inplanes, planes, blocks=2, stride=2)
+        block_low = self._make_layer(block, self.inplanes, planes, blocks=2)
+        block_low = nn.Sequential(
+            downsample2(self.inplanes),
+            block_low
+        )
 
         self.inplanes = planes*block.expansion
         block_merge = self._make_layer(block, self.inplanes, planes, blocks=1, stride=1)
