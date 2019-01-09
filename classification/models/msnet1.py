@@ -31,7 +31,7 @@ def downsample2(in_channels):
 
 class MSModule(nn.Module):
 
-    def __init__(self, block_high, block_low, block_merge=None, stride=2):
+    def __init__(self, block_high, block_low, block_merge=None, rescale=2):
         """
         block_high: high resolution block, usually it contains more layers
         block_low: low resolution block, usually it contains less layers compared to block_high
@@ -42,14 +42,14 @@ class MSModule(nn.Module):
         self.block_low = block_low
         self.block_merge = block_merge
 
-        self.stride = stride
+        self.rescale = rescale
     
     def forward(self, x):
         high = self.block_high(x)
         low = self.block_low(x)
 
-        if self.stride != 1:
-            low = nn.functional.interpolate(low, scale_factor=self.stride, mode="bilinear", align_corners=True)
+        if self.rescale != 1:
+            low = nn.functional.interpolate(low, scale_factor=self.rescale, mode="bilinear", align_corners=True)
 
         if self.block_merge:
             merge = self.block_merge(high + low)
@@ -97,7 +97,7 @@ class MSNet(nn.Module):
         )
         # Here this module is named `maxpool` because it corresponds to the `MaxPool`
         # in resnet
-        self.maxpool = MSModule(block_high, block_low, block_merge, stride=1)
+        self.maxpool = MSModule(block_high, block_low, block_merge, rescale=1)
 
         # layer1
         planes = 64
@@ -111,7 +111,7 @@ class MSNet(nn.Module):
         self.inplanes = planes*block.expansion
         block_merge = self._make_layer(block, self.inplanes, planes, blocks=1, stride=2)
 
-        self.layer1 = MSModule(block_high, block_low, block_merge, stride=2)
+        self.layer1 = MSModule(block_high, block_low, block_merge, rescale=2)
 
         # layer2
         planes = 128
@@ -125,7 +125,7 @@ class MSNet(nn.Module):
         self.inplanes = planes*block.expansion
         block_merge = self._make_layer(block, self.inplanes, planes, blocks=1, stride=2)
 
-        self.layer2 = MSModule(block_high, block_low, block_merge, stride=2)
+        self.layer2 = MSModule(block_high, block_low, block_merge, rescale=2)
 
         # layer3
         planes = 256
@@ -139,7 +139,7 @@ class MSNet(nn.Module):
         self.inplanes = planes*block.expansion
         block_merge = self._make_layer(block, self.inplanes, planes, blocks=1, stride=1)
 
-        self.layer3 = MSModule(block_high, block_low, block_merge, stride=2)
+        self.layer3 = MSModule(block_high, block_low, block_merge, rescale=2)
 
 
         self.layer4 = self._make_layer(block, planes*block.expansion, 512, blocks=3, stride=2)
