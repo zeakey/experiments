@@ -30,10 +30,10 @@ parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                     help='manual epoch number (useful on restarts)')
 parser.add_argument('--print-freq', default=20, type=int,
                     metavar='N', help='print frequency (default: 10)')
-parser.add_argument('--model', metavar='STR', default="msnet34", help='model')
 parser.add_argument('--visport', default=8097, type=int, metavar='N', help='Visdom port')
 
 # by default, arguments bellow will come from a config file
+parser.add_argument('--model', metavar='STR', default=None, help='model')
 parser.add_argument('--epochs', default=None, type=int, metavar='N',
                     help='number of total epochs to run')
 parser.add_argument('--data', metavar='DIR', default=None, help='path to dataset')
@@ -71,25 +71,25 @@ os.makedirs(CONFIGS["MISC"]["TMP"], exist_ok=True)
 logger = Logger(join(CONFIGS["MISC"]["TMP"], "log.txt"))
 
 # model and optimizer
-if args.model == "resnet18":
+if CONFIGS["MODEL"]["MODEL"] == "resnet18":
     model = models.resnet.resnet18(num_classes=CONFIGS["DATA"]["NUM_CLASSES"], cifar=True)
 
-elif args.model == "resnet34":
+elif CONFIGS["MODEL"]["MODEL"] == "resnet34":
     model = models.resnet.resnet34(num_classes=CONFIGS["DATA"]["NUM_CLASSES"], cifar=True)
 
-elif args.model == "resnet50":
+elif CONFIGS["MODEL"]["MODEL"] == "resnet50":
     model = models.resnet.resnet50(num_classes=CONFIGS["DATA"]["NUM_CLASSES"], cifar=True)
 
-elif args.model == "msnet34":
+elif CONFIGS["MODEL"]["MODEL"] == "msnet34":
     model = msnet.MSNet34(num_classes=CONFIGS["DATA"]["NUM_CLASSES"], cifar=True)
 
-elif args.model == "msnet50":
+elif CONFIGS["MODEL"]["MODEL"] == "msnet50":
     model = msnet.MSNet50(num_classes=CONFIGS["DATA"]["NUM_CLASSES"], cifar=True)
 
-elif args.model == "msnet1.msnet34":
+elif CONFIGS["MODEL"]["MODEL"] == "msnet1.msnet34":
     model = msnet1.msnet34(num_classes=CONFIGS["DATA"]["NUM_CLASSES"], cifar=True)
 
-elif args.model == "msnet1.msnet50":
+elif CONFIGS["MODEL"]["MODEL"] == "msnet1.msnet50":
     model = msnet1.msnet50(num_classes=CONFIGS["DATA"]["NUM_CLASSES"], cifar=True)
 
 else:
