@@ -20,13 +20,12 @@ from vltools.pytorch import save_checkpoint, AverageMeter, ilsvrc2012, accuracy
 import vltools.pytorch as vlpytorch
 import utils, models
 
-from models import msnet, resnet
+from models import msnet, resnet, msnet1
 
 parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
 # arguments from command line
 parser.add_argument('--config', default='configs/cifar10.yml', help='path to dataset')
-parser.add_argument('--epochs', default=180, type=int, metavar='N',
-                    help='number of total epochs to run')
+
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                     help='manual epoch number (useful on restarts)')
 parser.add_argument('--print-freq', default=20, type=int,
@@ -35,6 +34,8 @@ parser.add_argument('--model', metavar='STR', default="msnet34", help='model')
 parser.add_argument('--visport', default=8097, type=int, metavar='N', help='Visdom port')
 
 # by default, arguments bellow will come from a config file
+parser.add_argument('--epochs', default=None, type=int, metavar='N',
+                    help='number of total epochs to run')
 parser.add_argument('--data', metavar='DIR', default=None, help='path to dataset')
 parser.add_argument('--num_classes', default=None, type=int, metavar='N', help='Number of classes')
 parser.add_argument('--bs', '--batch-size', default=None, type=int,
@@ -77,13 +78,19 @@ elif args.model == "resnet34":
     model = models.resnet.resnet34(num_classes=CONFIGS["DATA"]["NUM_CLASSES"], cifar=True)
 
 elif args.model == "resnet50":
-    model = models.resnet.resnet50(num_classes=CONFIGS["DATA"]["NUM_CLASSES"])
+    model = models.resnet.resnet50(num_classes=CONFIGS["DATA"]["NUM_CLASSES"], cifar=True)
 
 elif args.model == "msnet34":
     model = msnet.MSNet34(num_classes=CONFIGS["DATA"]["NUM_CLASSES"], cifar=True)
 
 elif args.model == "msnet50":
-    model = msnet.MSNet50(num_classes=CONFIGS["DATA"]["NUM_CLASSES"], cifar10=True)
+    model = msnet.MSNet50(num_classes=CONFIGS["DATA"]["NUM_CLASSES"], cifar=True)
+
+elif args.model == "msnet1.msnet34":
+    model = msnet1.msnet34(num_classes=CONFIGS["DATA"]["NUM_CLASSES"], cifar=True)
+
+elif args.model == "msnet1.msnet50":
+    model = msnet1.msnet50(num_classes=CONFIGS["DATA"]["NUM_CLASSES"], cifar=True)
 
 else:
     raise ValueError("Unknown model: %s" % args.model)
@@ -117,7 +124,10 @@ def main():
     assert isdir(CONFIGS["DATA"]["DIR"]), CONFIGS["DATA"]["DIR"]
     start_time = time.time()
 
-    train_loader, val_loader = vlpytorch.cifar10(CONFIGS["DATA"]["DIR"], bs=CONFIGS["DATA"]["BS"])
+    if CONFIGS["DATA"]["DATASET"] == "cifar10":
+        train_loader, val_loader = vlpytorch.cifar10(CONFIGS["DATA"]["DIR"], bs=CONFIGS["DATA"]["BS"])
+    elif CONFIGS["DATA"]["DATASET"] == "cifar100":
+        train_loader, val_loader = vlpytorch.cifar100(CONFIGS["DATA"]["DIR"], bs=CONFIGS["DATA"]["BS"])
 
     logger.info("Data loading done, %.3f sec elapsed." % (time.time() - start_time))
 
@@ -142,7 +152,7 @@ def main():
             logger.info("=> no checkpoint found at '{}'".format(args.resume))
 
     start_time = time.time()
-    for epoch in range(args.start_epoch, args.epochs):
+    for epoch in range(args.start_epoch, CONFIGS["OPTIMIZER"]["EPOCHS"]):
 
         # train and evaluate
         loss = train(train_loader, epoch)
@@ -235,13 +245,13 @@ def main():
         hours_per_epoch = (t // 3600) / (epoch + 1 - args.start_epoch)
         elapsed = utils.DayHourMinute(t)
         t /= (epoch + 1) - args.start_epoch    # seconds per epoch
-        t = (args.epochs - epoch - 1) * t      # remaining seconds
+        t = (CONFIGS["OPTIMIZER"]["EPOCHS"] - epoch - 1) * t      # remaining seconds
         remaining = utils.DayHourMinute(t)
 
         logger.info("Epoch {0}/{1} finishied, {2} hours per epoch on average.\t"
                     "Elapsed {elapsed.days:d} days {elapsed.hours:d} hours {elapsed.minutes:d} minutes.\t"
                     "Remaining {remaining.days:d} days {remaining.hours:d} hours {remaining.minutes:d} minutes.".format(
-                    epoch, args.epochs, hours_per_epoch, elapsed=elapsed, remaining=remaining))
+                    epoch, CONFIGS["OPTIMIZER"]["EPOCHS"], hours_per_epoch, elapsed=elapsed, remaining=remaining))
 
     logger.info("Optimization done!")
 
@@ -291,7 +301,7 @@ def train(train_loader, epoch):
                   'Prec@1 {top1.val:.3f} ({top1.avg:.3f})\t'
                   'Prec@5 {top5.val:.3f} ({top5.avg:.3f})\t'
                   'LR: {lr:.5f}'.format(
-                   epoch, args.epochs, i, len(train_loader),
+                   epoch, CONFIGS["OPTIMIZER"]["EPOCHS"], i, len(train_loader),
                    batch_time=batch_time, loss=losses, top1=top1,
                    top5=top5, lr=optimizer.param_groups[0]["lr"]))
 
