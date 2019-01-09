@@ -11,13 +11,14 @@ def load_yaml(yaml_file):
     return yaml.load(open(yaml_file))
 
 def merge_config(args, yaml_config):
-
+    # data
     if hasattr(args, "data") and args.data and args.data != yaml_config["DATA"]["DIR"]:
         yaml_config["DATA"]["DIR"] = args.data
 
     if hasattr(args, "bs") and args.bs and args.bs != yaml_config["DATA"]["BS"]:
         yaml_config["DATA"]["BS"] = args.bs
 
+    # model
     if hasattr(args, "model") and args.model and args.model != yaml_config["MODEL"]["MODEL"]:
         yaml_config["MODEL"]["MODEL"] = args.model
 
