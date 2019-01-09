@@ -114,7 +114,7 @@ class MSNet(nn.Module):
         # Module 3
         planes = 128
         block_high = self._make_layer(block, self.inplanes, planes, blocks=1)
-        block_low = self._make_layer(block, self.inplanes, planes, blocks=2)
+        block_low = self._make_layer(block, self.inplanes, planes, blocks=3)
         block_low = nn.Sequential(
             downsample2(self.inplanes),
             block_low
@@ -127,8 +127,8 @@ class MSNet(nn.Module):
 
         # Module 4
         planes = 256
-        block_high = self._make_layer(block, self.inplanes, planes, blocks=1)
-        block_low = self._make_layer(block, self.inplanes, planes, blocks=2)
+        block_high = self._make_layer(block, self.inplanes, planes, blocks=2)
+        block_low = self._make_layer(block, self.inplanes, planes, blocks=4)
         block_low = nn.Sequential(
             downsample2(self.inplanes),
             block_low
