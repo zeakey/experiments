@@ -27,6 +27,9 @@ def merge_config(args, yaml_config):
     # Optimizer
     if hasattr(args, "lr") and args.lr and args.lr != yaml_config["OPTIMIZER"]["LR"]:
         yaml_config["OPTIMIZER"]["LR"] = args.lr
+    
+    if hasattr(args, "epochs") and args.epochs and args.epochs != yaml_config["OPTIMIZER"]["EPOCHS"]:
+        yaml_config["OPTIMIZER"]["EPOCHS"] = args.epochs
 
     # CUDA
     if hasattr(args, "gpu") and args.gpu and args.gpu != yaml_config["CUDA"]["GPU_ID"]:
