@@ -95,9 +95,11 @@ class MSNet(nn.Module):
             nn.BatchNorm2d(64),
             nn.ReLU(inplace=True)
         )
-        self.module1 = MSModule(block_high, block_low, block_merge, stride=1)
+        # Here this module is named `maxpool` because it corresponds to the `MaxPool`
+        # in resnet
+        self.maxpool = MSModule(block_high, block_low, block_merge, stride=1)
 
-        # Module 2
+        # layer1
         planes = 64
         block_high = self._make_layer(block, self.inplanes, planes, blocks=1)
         block_low = self._make_layer(block, self.inplanes, planes, blocks=2)
@@ -109,9 +111,9 @@ class MSNet(nn.Module):
         self.inplanes = planes*block.expansion
         block_merge = self._make_layer(block, self.inplanes, planes, blocks=1, stride=2)
 
-        self.module2 = MSModule(block_high, block_low, block_merge, stride=2)
+        self.layer1 = MSModule(block_high, block_low, block_merge, stride=2)
 
-        # Module 3
+        # layer2
         planes = 128
         block_high = self._make_layer(block, self.inplanes, planes, blocks=1)
         block_low = self._make_layer(block, self.inplanes, planes, blocks=3)
@@ -123,9 +125,9 @@ class MSNet(nn.Module):
         self.inplanes = planes*block.expansion
         block_merge = self._make_layer(block, self.inplanes, planes, blocks=1, stride=2)
 
-        self.module3 = MSModule(block_high, block_low, block_merge, stride=2)
+        self.layer2 = MSModule(block_high, block_low, block_merge, stride=2)
 
-        # Module 4
+        # layer3
         planes = 256
         block_high = self._make_layer(block, self.inplanes, planes, blocks=1)
         block_low = self._make_layer(block, self.inplanes, planes, blocks=5)
@@ -137,10 +139,10 @@ class MSNet(nn.Module):
         self.inplanes = planes*block.expansion
         block_merge = self._make_layer(block, self.inplanes, planes, blocks=1, stride=1)
 
-        self.module4 = MSModule(block_high, block_low, block_merge, stride=2)
+        self.layer3 = MSModule(block_high, block_low, block_merge, stride=2)
 
 
-        self.res5 = self._make_layer(block, planes*block.expansion, 512, blocks=3, stride=2)
+        self.layer4 = self._make_layer(block, planes*block.expansion, 512, blocks=3, stride=2)
         
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
         self.fc = nn.Linear(512 * block.expansion, num_classes)
@@ -181,12 +183,12 @@ class MSNet(nn.Module):
     def forward(self, x):
         x = self.conv1(x)
 
-        x = self.module1(x)
-        x = self.module2(x)
-        x = self.module3(x)
-        x = self.module4(x)
+        x = self.maxpool(x)
 
-        x = self.res5(x)
+        x = self.layer1(x)
+        x = self.layer2(x)
+        x = self.layer3(x)
+        x = self.layer4(x)
 
         x = self.avgpool(x)
         x = x.view(x.size(0), -1)
