@@ -168,10 +168,17 @@ class MSNet34(nn.Module):
         else:
             self.conv1 = resnet_input()
 
+        self.relu = nn.ReLU(inplace=True)
+
         self.conv2a = conv3x3(64, 64, stride=2)
+
+        self.bn2a = nn.BatchNorm2d(64)
         self.conv2b1 = conv3x3(64, 32, stride=1)
+        self.bn2b1 = nn.BatchNorm2d(32)
         self.conv2b2 = conv3x3(32, 32, stride=2)
+        self.bn2b2 = nn.BatchNorm2d(32)
         self.conv2b3 = conv1x1(32, 64, stride=1)
+        self.bn2b3 = nn.BatchNorm2d(64)
 
         self.module1 = MSModule(block=block, blocks=[2, 1], inplanes = [64, 64], planes=[64, 64], stride=[2, 1, 2])
         self.module2 = MSModule(block=block, blocks=[3, 1], inplanes = [64, 64], planes = [128, 128], stride=[2, 1, 2])
@@ -229,10 +236,12 @@ class MSNet34(nn.Module):
     def forward(self, x):
         x = self.conv1(x)
 
-        x2a = self.conv2a(x)
-        x2b = self.conv2b1(x)
-        x2b = self.conv2b2(x2b)
-        x2b = self.conv2b3(x2b)
+        x2a = self.relu(self.bn2a(self.conv2a(x)))
+
+        x2b = self.relu(self.bn2b1(self.conv2b1(x)))
+        x2b = self.relu(self.bn2b2(self.conv2b2(x2b)))
+        x2b = self.relu(self.bn2b3(self.conv2b3(x2b)))
+
         x = x2a + x2b
 
         x = self.module1(x)
@@ -258,10 +267,17 @@ class MSNet50(nn.Module):
         else:
             self.conv1 = resnet_input()
 
+        self.relu = nn.ReLU(inplace=True)
+
         self.conv2a = conv3x3(64, 64, stride=2)
+        self.bn2a = nn.BatchNorm2d(64)
+
         self.conv2b1 = conv3x3(64, 32, stride=1)
+        self.bn2b1 = nn.BatchNorm2d(32)
         self.conv2b2 = conv3x3(32, 32, stride=2)
+        self.bn2b2 = nn.BatchNorm2d(32)
         self.conv2b3 = conv1x1(32, 64, stride=1)
+        self.bn2b3 = nn.BatchNorm2d(64)
 
         self.module1 = MSModule(block=block, blocks=[2, 1], inplanes = [64, 64], planes=[64, 64], stride=[2, 1, 2])
         self.module2 = MSModule(block=block, blocks=[3, 1], inplanes = [256, 256], planes = [128, 128], stride=[2, 1, 2])
@@ -315,12 +331,15 @@ class MSNet50(nn.Module):
         return nn.Sequential(*layers)
 
     def forward(self, x):
+
         x = self.conv1(x)
 
-        x2a = self.conv2a(x)
-        x2b = self.conv2b1(x)
-        x2b = self.conv2b2(x2b)
-        x2b = self.conv2b3(x2b)
+        x2a = self.relu(self.bn2a(self.conv2a(x)))
+
+        x2b = self.relu(self.bn2b1(self.conv2b1(x)))
+        x2b = self.relu(self.bn2b2(self.conv2b2(x2b)))
+        x2b = self.relu(self.bn2b3(self.conv2b3(x2b)))
+
         x = x2a + x2b
 
         x = self.module1(x)
