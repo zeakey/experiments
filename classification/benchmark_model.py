@@ -14,7 +14,7 @@ if benchmark:
     start_time = time.time()
     for i in range(num_batch):
         output = msnet50(torch.zeros(bs, 3, 224, 224).cuda())
-    print("MSNet50: %.5f seconds." % ((time.time() - start_time)/num_batch))
+    print("MSNet50: %.5f seconds per batch." % ((time.time() - start_time)/num_batch))
     
     start_time = time.time()
     for i in range(num_batch):
