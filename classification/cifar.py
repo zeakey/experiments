@@ -253,7 +253,7 @@ def main():
                     "Remaining {remaining.days:d} days {remaining.hours:d} hours {remaining.minutes:d} minutes.".format(
                     epoch, CONFIGS["OPTIMIZER"]["EPOCHS"], hours_per_epoch, elapsed=elapsed, remaining=remaining))
 
-    logger.info("Optimization done!")
+    logger.info("Optimization done, ALL results saved to %s." % CONFIGS["MISC"]["TMP"])
 
 def train(train_loader, epoch):
     batch_time = AverageMeter()
