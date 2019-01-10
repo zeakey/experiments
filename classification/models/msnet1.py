@@ -18,7 +18,6 @@ def resnet_input():
         nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3, bias=False),
         nn.BatchNorm2d(64),
         nn.ReLU(inplace=True),
-        # nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
     )
 
 def downsample2(in_channels):
@@ -64,40 +63,21 @@ class MSNet(nn.Module):
     def __init__(self, block, num_classes=1000, zero_init_residual=False, cifar=False):
 
         super(MSNet, self).__init__()
-        
         self.inplanes = 64
 
         if cifar:
-            self.conv1 = cifar_input()
+            self.conv1 = nn.Sequential(
+                nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1, bias=False),
+                nn.BatchNorm2d(64),
+                nn.ReLU(inplace=True)
+            )
         else:
-            self.conv1 = resnet_input()
-        
-        block_high = nn.Sequential(
-            nn.Conv2d(in_channels=64, out_channels=64, kernel_size=3, stride=2, padding=1, bias=False),
-            nn.BatchNorm2d(64),
-            nn.ReLU(inplace=True)
-        )
-        block_low = nn.Sequential(
-            nn.Conv2d(in_channels=64, out_channels=32, kernel_size=3, stride=1, padding=1, bias=False),
-            nn.BatchNorm2d(32),
-            nn.ReLU(inplace=True),
-            #
-            nn.Conv2d(in_channels=32, out_channels=32, kernel_size=3, stride=2, padding=1, bias=False),
-            nn.BatchNorm2d(32),
-            nn.ReLU(inplace=True),
-            #
-            nn.Conv2d(in_channels=32, out_channels=64, kernel_size=1, stride=1, bias=False),
-            nn.BatchNorm2d(64),
-            nn.ReLU(inplace=True)
-        )
-        block_merge = nn.Sequential(
-            nn.Conv2d(in_channels=64, out_channels=64, kernel_size=1, bias=False),
-            nn.BatchNorm2d(64),
-            nn.ReLU(inplace=True)
-        )
-        # Here this module is named `maxpool` because it corresponds to the `MaxPool`
-        # in resnet
-        self.maxpool = MSModule(block_high, block_low, block_merge, rescale=1)
+            self.conv1 = nn.Sequential(
+                nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3, bias=False),
+                nn.BatchNorm2d(64),
+                nn.ReLU(inplace=True),
+                nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
+            )
 
         # layer1
         planes = 64
@@ -182,8 +162,6 @@ class MSNet(nn.Module):
 
     def forward(self, x):
         x = self.conv1(x)
-
-        x = self.maxpool(x)
 
         x = self.layer1(x)
         x = self.layer2(x)
