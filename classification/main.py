@@ -1,5 +1,6 @@
 import torch, torchvision
 import torch.nn as nn
+from torch.optim import lr_scheduler
 import torchvision
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
@@ -54,7 +55,6 @@ parser.add_argument('--tmp', help='tmp folder', default=None)
 parser.add_argument('--benchmark', dest='benchmark', action="store_true")
 parser.add_argument('--gpu', default=None, type=int, metavar='N', help='GPU ID')
 
-
 args = parser.parse_args()
 
 assert isfile(args.config)
@@ -105,6 +105,9 @@ logger.info(model)
 logger.info("Optimizer details:")
 logger.info(optimizer)
 
+scheduler = lr_scheduler.MultiStepLR(optimizer,
+                      milestones=CONFIGS["OPTIMIZER"]["MILESTONES"],
+                      gamma=CONFIGS["OPTIMIZER"]["GAMMA"])
 # loss function
 criterion = torch.nn.CrossEntropyLoss()
 
@@ -117,9 +120,38 @@ def main():
     start_time = time.time()
 
     if CONFIGS["DATA"]["DATASET"] == "ilsvrc2012":
-        train_loader, val_loader = ilsvrc2012(CONFIGS["DATA"]["DIR"], bs=CONFIGS["DATA"]["BS"])
+        normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                        std=[0.229, 0.224, 0.225])
+        train_dataset = datasets.ImageFolder(
+            join(CONFIGS["DATA"]["DIR"], 'train'),
+            transforms.Compose([
+                transforms.RandomResizedCrop(224),
+                transforms.RandomHorizontalFlip(),
+                transforms.ToTensor(),
+                normalize,
+            ]))
+
+        assert len(train_dataset.classes) == CONFIGS["DATA"]["NUM_CLASSES"], \
+            "%d vs %d" % (len(train_dataset.classes), CONFIGS["DATA"]["NUM_CLASSES"])
+
+        train_loader = torch.utils.data.DataLoader(
+            train_dataset, batch_size=CONFIGS["DATA"]["BS"],
+            shuffle=True, num_workers=8, pin_memory=True)
+
+        val_loader = torch.utils.data.DataLoader(
+            datasets.ImageFolder(
+                join(CONFIGS["DATA"]["DIR"], 'train'),
+                transforms.Compose([
+                    transforms.Resize(256),
+                    transforms.CenterCrop(224),
+                    transforms.ToTensor(),
+                    normalize])),
+            batch_size=100, shuffle=False,
+            num_workers=8, pin_memory=True)
+
     elif CONFIGS["DATA"]["DATASET"] == "cifar10":
         train_loader, val_loader = vlpytorch.cifar10(CONFIGS["DATA"]["DIR"], bs=CONFIGS["DATA"]["BS"])
+
     else:
         raise ValueError("Unknown dataset: %s. (Supported datasets: ilsvrc2012 | cifar10 | cifar100)" % CONFIGS["DATA"]["DATASET"])
 
@@ -151,6 +183,7 @@ def main():
         # train and evaluate
         loss = train(train_loader, epoch)
         acc1, acc5 = validate(val_loader)
+        scheduler.step()
 
         # record stats
         loss_record.append(loss)
@@ -266,11 +299,11 @@ def train(train_loader, epoch):
         output = model(data)
         loss = criterion(output, target)
 
-        # adjust learning rate
-        lr = utils.get_lr_per_iter(epoch, i, len(train_loader),
-                                   base_lr=CONFIGS["OPTIMIZER"]["LR"],
-                                   warmup_epochs=CONFIGS["OPTIMIZER"]["WARMUP_EPOCHS"])
-        utils.set_lr(optimizer, lr)
+        # # adjust learning rate
+        # lr = utils.get_lr_per_iter(epoch, i, len(train_loader),
+        #                            base_lr=CONFIGS["OPTIMIZER"]["LR"],
+        #                            warmup_epochs=CONFIGS["OPTIMIZER"]["WARMUP_EPOCHS"])
+        # utils.set_lr(optimizer, lr)
 
         # measure accuracy and record loss
         acc1, acc5 = accuracy(output, target, topk=(1, 5))
@@ -286,7 +319,7 @@ def train(train_loader, epoch):
         # measure elapsed time
         batch_time.update(time.time() - end)
         end = time.time()
-
+        lr = optimizer.param_groups[0]["lr"]
         if i % CONFIGS["MISC"]["LOGFREQ"] == 0:
 
             logger.info('Epoch: [{0}][{1}/{2}]\t'
@@ -296,7 +329,8 @@ def train(train_loader, epoch):
                   'Prec@5 {top5.val:.3f} ({top5.avg:.3f})\t'
                   'LR: {lr:.5f}'.format(
                    epoch, i, len(train_loader),
-                   batch_time=batch_time, loss=losses, top1=top1, top5=top5, lr=lr))
+                   batch_time=batch_time, loss=losses, top1=top1, top5=top5,
+                   lr=lr))
 
     return losses.avg
 
