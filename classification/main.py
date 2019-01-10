@@ -55,6 +55,7 @@ parser.add_argument('--resume', default=None, type=str, metavar='PATH',
                     help='path to latest checkpoint')
 parser.add_argument('--tmp', help='tmp folder', default=None)
 parser.add_argument('--benchmark', dest='benchmark', action="store_true")
+parser.add_argument('--fp16', dest='fp16', action="store_true")
 parser.add_argument('--gpu', default=None, type=int, metavar='N', help='GPU ID')
 
 args = parser.parse_args()
@@ -110,6 +111,16 @@ logger.info(optimizer)
 scheduler = lr_scheduler.MultiStepLR(optimizer,
                       milestones=CONFIGS["OPTIMIZER"]["MILESTONES"],
                       gamma=CONFIGS["OPTIMIZER"]["GAMMA"])
+
+if args.fp16:
+    from apex.fp16_utils import FP16_Optimizer, network_to_half
+    from apex import amp
+    torch.backends.cudnn.benchmark = True
+    optimizer = FP16_Optimizer(optimizer, static_loss_scale=1.0, dynamic_loss_scale=False)
+    model = network_to_half(model)
+    amp_handle = amp.init(enabled=args.fp16)
+    model = network_to_half(model)
+
 # loss function
 criterion = torch.nn.CrossEntropyLoss()
 
@@ -153,6 +164,9 @@ def main():
 
     elif CONFIGS["DATA"]["DATASET"] == "cifar10":
         train_loader, val_loader = vlpytorch.cifar10(CONFIGS["DATA"]["DIR"], bs=CONFIGS["DATA"]["BS"])
+
+    elif CONFIGS["DATA"]["DATASET"] == "cifar100":
+        train_loader, val_loader = vlpytorch.cifar100(CONFIGS["DATA"]["DIR"], bs=CONFIGS["DATA"]["BS"])
 
     else:
         raise ValueError("Unknown dataset: %s. (Supported datasets: ilsvrc2012 | cifar10 | cifar100)" % CONFIGS["DATA"]["DATASET"])
@@ -298,6 +312,10 @@ def train(train_loader, epoch):
         else:
             target = target.cuda(device=CONFIGS["CUDA"]["GPU_ID"], non_blocking=True)
             data = data.cuda(device=CONFIGS["CUDA"]["GPU_ID"])
+
+        if args.fp16:
+            data = data.half()
+
         output = model(data)
         loss = criterion(output, target)
 
@@ -315,7 +333,12 @@ def train(train_loader, epoch):
 
         # compute gradient and do SGD step
         optimizer.zero_grad()
-        loss.backward()
+
+        if args.fp16:
+            optimizer.backward(loss)
+        else:
+            loss.backward()
+
         optimizer.step()
 
         # measure elapsed time
