@@ -18,6 +18,9 @@ def merge_config(args, yaml_config):
     if hasattr(args, "bs") and args.bs and args.bs != yaml_config["DATA"]["BS"]:
         yaml_config["DATA"]["BS"] = args.bs
 
+    if hasattr(args, "num_classes") and args.num_classes and args.num_classes != yaml_config["DATA"]["NUM_CLASSES"]:
+        yaml_config["DATA"]["NUM_CLASSES"] = args.num_classes
+
     # model
     if hasattr(args, "model") and args.model and args.model != yaml_config["MODEL"]["MODEL"]:
         yaml_config["MODEL"]["MODEL"] = args.model
