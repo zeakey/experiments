@@ -140,7 +140,7 @@ def main():
 
         val_loader = torch.utils.data.DataLoader(
             datasets.ImageFolder(
-                join(CONFIGS["DATA"]["DIR"], 'train'),
+                join(CONFIGS["DATA"]["DIR"], 'val'),
                 transforms.Compose([
                     transforms.Resize(256),
                     transforms.CenterCrop(224),
