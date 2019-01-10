@@ -25,20 +25,22 @@ from models import msnet, resnet
 parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
 # arguments from command line
 parser.add_argument('--config', default='configs/basic.yml', help='path to dataset')
-parser.add_argument('--epochs', default=120, type=int, metavar='N',
-                    help='number of total epochs to run')
+
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                     help='manual epoch number (useful on restarts)')
 parser.add_argument('--print-freq', default=20, type=int,
                     metavar='N', help='print frequency (default: 10)')
-parser.add_argument('--model', metavar='STR', default="msnet34", help='model')
+
 parser.add_argument('--visport', default=8097, type=int, metavar='N', help='Visdom port')
 
 # by default, arguments bellow will come from a config file
+parser.add_argument('--model', metavar='STR', default=None, help='model')
 parser.add_argument('--data', metavar='DIR', default=None, help='path to dataset')
 parser.add_argument('--num_classes', default=None, type=int, metavar='N', help='Number of classes')
 parser.add_argument('--bs', '--batch-size', default=None, type=int,
                     metavar='N', help='mini-batch size')
+parser.add_argument('--epochs', default=None, type=int, metavar='N',
+                    help='number of total epochs to run')
 parser.add_argument('--lr', '--learning-rate', default=None, type=float,
                     metavar='LR', help='initial learning rate')
 parser.add_argument('--stepsize', '--step-size', default=None, type=int,
@@ -71,22 +73,22 @@ os.makedirs(CONFIGS["MISC"]["TMP"], exist_ok=True)
 logger = Logger(join(CONFIGS["MISC"]["TMP"], "log.txt"))
 
 # model and optimizer
-if args.model == "resnet34":
+if CONFIGS["MODEL"]["MODEL"]  == "resnet34":
     model = models.resnet.resnet34(num_classes=CONFIGS["DATA"]["NUM_CLASSES"])
 
-elif args.model == "resnet50":
+elif CONFIGS["MODEL"]["MODEL"]  == "resnet50":
     model = models.resnet.resnet50(num_classes=CONFIGS["DATA"]["NUM_CLASSES"])
 
-elif args.model == "msnet34":
+elif CONFIGS["MODEL"]["MODEL"]  == "msnet34":
     model = msnet.MSNet34(num_classes=CONFIGS["DATA"]["NUM_CLASSES"],
                           cifar="cifar" in CONFIGS["DATA"]["DATASET"])
 
-elif args.model == "msnet50":
+elif CONFIGS["MODEL"]["MODEL"]  == "msnet50":
     model = msnet.MSNet50(num_classes=CONFIGS["DATA"]["NUM_CLASSES"],
                           cifar="cifar" in CONFIGS["DATA"]["DATASET"])
 
 else:
-    raise ValueError("Unknown model: %s" % args.model)
+    raise ValueError("Unknown model: %s" % CONFIGS["MODEL"]["MODEL"] )
 
 if CONFIGS["CUDA"]["DATA_PARALLEL"]:
     logger.info("Model Data Parallel")
@@ -178,7 +180,7 @@ def main():
             logger.info("=> no checkpoint found at '{}'".format(args.resume))
 
     start_time = time.time()
-    for epoch in range(args.start_epoch, args.epochs):
+    for epoch in range(args.start_epoch, CONFIGS["OPTIMIZER"]["EPOCHS"]):
 
         # train and evaluate
         loss = train(train_loader, epoch)
