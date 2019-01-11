@@ -20,7 +20,8 @@ from vltools.pytorch import save_checkpoint, AverageMeter, ilsvrc2012, accuracy
 import vltools.pytorch as vlpytorch
 import utils, models
 
-from models import msnet, resnet
+from models import msnet1, msnet2, msnet3, resnet_sandglass
+from torchvision.models import resnet
 
 parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
 # arguments from command line
@@ -74,22 +75,8 @@ os.makedirs(CONFIGS["MISC"]["TMP"], exist_ok=True)
 logger = Logger(join(CONFIGS["MISC"]["TMP"], "log.txt"))
 
 # model and optimizer
-if CONFIGS["MODEL"]["MODEL"]  == "resnet34":
-    model = models.resnet.resnet34(num_classes=CONFIGS["DATA"]["NUM_CLASSES"])
-
-elif CONFIGS["MODEL"]["MODEL"]  == "resnet50":
-    model = models.resnet.resnet50(num_classes=CONFIGS["DATA"]["NUM_CLASSES"])
-
-elif CONFIGS["MODEL"]["MODEL"]  == "msnet34":
-    model = msnet.MSNet34(num_classes=CONFIGS["DATA"]["NUM_CLASSES"],
-                          cifar="cifar" in CONFIGS["DATA"]["DATASET"])
-
-elif CONFIGS["MODEL"]["MODEL"]  == "msnet50":
-    model = msnet.MSNet50(num_classes=CONFIGS["DATA"]["NUM_CLASSES"],
-                          cifar="cifar" in CONFIGS["DATA"]["DATASET"])
-
-else:
-    raise ValueError("Unknown model: %s" % CONFIGS["MODEL"]["MODEL"] )
+model = CONFIGS["MODEL"]["MODEL"] + "(num_classes=%d)" % (CONFIGS["DATA"]["NUM_CLASSES"])
+model = eval(model)
 
 if CONFIGS["CUDA"]["DATA_PARALLEL"]:
     logger.info("Model Data Parallel")
@@ -347,13 +334,13 @@ def train(train_loader, epoch):
         lr = optimizer.param_groups[0]["lr"]
         if i % CONFIGS["MISC"]["LOGFREQ"] == 0:
 
-            logger.info('Epoch: [{0}][{1}/{2}]\t'
+            logger.info('Epoch: [{0}/{1}][{2}/{3}]\t'
                   'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
                   'Train Loss {loss.val:.3f} ({loss.avg:.3f})\t'
                   'Prec@1 {top1.val:.3f} ({top1.avg:.3f})\t'
                   'Prec@5 {top5.val:.3f} ({top5.avg:.3f})\t'
                   'LR: {lr:.5f}'.format(
-                   epoch, i, len(train_loader),
+                   epoch, CONFIGS["OPTIMIZER"]["EPOCHS"], i, len(train_loader),
                    batch_time=batch_time, loss=losses, top1=top1, top5=top5,
                    lr=lr))
 
