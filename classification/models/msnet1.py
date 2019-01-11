@@ -6,20 +6,6 @@ def conv1x1(in_planes, out_planes, stride=1):
     """1x1 convolution"""
     return nn.Conv2d(in_planes, out_planes, kernel_size=1, stride=stride, bias=False)
 
-def cifar_input():
-    return nn.Sequential(
-        nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1, bias=False),
-        nn.BatchNorm2d(64),
-        nn.ReLU(inplace=True)
-    )
-
-def resnet_input():
-    return nn.Sequential(
-        nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3, bias=False),
-        nn.BatchNorm2d(64),
-        nn.ReLU(inplace=True),
-    )
-
 def downsample2(in_channels):
     return nn.Sequential(
         nn.AvgPool2d(kernel_size=2, stride=2),
