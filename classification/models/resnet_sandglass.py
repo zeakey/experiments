@@ -49,7 +49,7 @@ class BasicBlock(nn.Module):
         identity = x
 
         if self.sandglass:
-            out = self.avgpool(x)
+            out = nn.functional.avg_pool2d(x, kernel_size=2, stride=2)
             out = self.conv1(out)
         else:
             out = self.conv1(x)
@@ -75,11 +75,9 @@ class BasicBlock(nn.Module):
 class Bottleneck(nn.Module):
     expansion = 4
 
-    def __init__(self, inplanes, planes, stride=1, downsample=None):
+    def __init__(self, inplanes, planes, stride=1, downsample=None, sandglass=False):
         super(Bottleneck, self).__init__()
-
-        if self.sandglass:
-            self.avgpool = nn.AvgPool2d(kernel_size=2, stride=2)
+        self.sandglass = sandglass
 
         self.conv1 = conv1x1(inplanes, planes)
         self.bn1 = nn.BatchNorm2d(planes)
@@ -95,7 +93,7 @@ class Bottleneck(nn.Module):
         identity = x
 
         if self.sandglass:
-            out = self.avgpool(x)
+            out = nn.functional.avg_pool2d(x, kernel_size=2, stride=2)
             out = self.conv1(out)
         else:
             out = self.conv1(x)
