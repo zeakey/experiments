@@ -5,7 +5,7 @@ DATA:
   NUM_CLASSES: 100
 
 MODEL:
-  MODEL: "resnet34"
+  MODEL: "resnet.resnet34"
 
 OPTIMIZER:
   TYPE: SGD
