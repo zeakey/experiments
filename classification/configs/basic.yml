@@ -28,4 +28,5 @@ VISDOM:
 MISC:
   LOGFREQ: 20
   TMP: "tmp/tmp"
+  RAND_SEED: 7
 
