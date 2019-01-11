@@ -334,14 +334,15 @@ def train(train_loader, epoch):
         lr = optimizer.param_groups[0]["lr"]
         if i % CONFIGS["MISC"]["LOGFREQ"] == 0:
 
-            logger.info('Epoch: [{0}/{1}][{2}/{3}]\t'
-                  'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
+            logger.info('Epoch[{0}/{1}] Iter[{2}/{3}]\t'
+                  'Batch Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
+                  'Data Time {data_time.val:.3f} ({data_time.avg:.3f})\t'
                   'Train Loss {loss.val:.3f} ({loss.avg:.3f})\t'
                   'Prec@1 {top1.val:.3f} ({top1.avg:.3f})\t'
                   'Prec@5 {top5.val:.3f} ({top5.avg:.3f})\t'
-                  'LR: {lr:.5f}'.format(
+                  'LR: {lr:.4f}'.format(
                    epoch, CONFIGS["OPTIMIZER"]["EPOCHS"], i, len(train_loader),
-                   batch_time=batch_time, loss=losses, top1=top1, top5=top5,
+                   batch_time=batch_time, data_time=data_time, loss=losses, top1=top1, top5=top5,
                    lr=lr))
 
     return losses.avg
