@@ -13,14 +13,14 @@ import matplotlib.pyplot as plt
 import os, sys, argparse, time, shutil, visdom
 from os.path import join, split, isdir, isfile, dirname, abspath
 
-import vltools
+import vltools, utils
 from vltools import Logger
 from vltools import image as vlimage
 from vltools.pytorch import save_checkpoint, AverageMeter, ilsvrc2012, accuracy
 import vltools.pytorch as vlpytorch
-import utils, models
 
-from models import msnet, resnet, msnet1
+from models import msnet1, msnet2, msnet3, resnet_sandglass
+from torchvision.models import resnet
 
 parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
 # arguments from command line
@@ -61,6 +61,14 @@ args = parser.parse_args()
 CONFIGS = utils.load_yaml(args.config)
 CONFIGS = utils.merge_config(args, CONFIGS)
 
+# Fix random seed for reproducibility
+# According to https://pytorch.org/docs/master/notes/randomness.html
+np.random.seed(CONFIGS["MISC"]["RAND_SEED"])
+torch.manual_seed(CONFIGS["MISC"]["RAND_SEED"])
+torch.cuda.manual_seed_all(CONFIGS["MISC"]["RAND_SEED"])
+torch.backends.cudnn.deterministic = True
+torch.backends.cudnn.benchmark = False
+
 if CONFIGS["VISDOM"]["VISDOM"] == True:
     import visdom
     vis = visdom.Visdom(port=CONFIGS["VISDOM"]["PORT"])
@@ -71,29 +79,8 @@ os.makedirs(CONFIGS["MISC"]["TMP"], exist_ok=True)
 logger = Logger(join(CONFIGS["MISC"]["TMP"], "log.txt"))
 
 # model and optimizer
-if CONFIGS["MODEL"]["MODEL"] == "resnet18":
-    model = models.resnet.resnet18(num_classes=CONFIGS["DATA"]["NUM_CLASSES"], cifar=True)
-
-elif CONFIGS["MODEL"]["MODEL"] == "resnet34":
-    model = models.resnet.resnet34(num_classes=CONFIGS["DATA"]["NUM_CLASSES"], cifar=True)
-
-elif CONFIGS["MODEL"]["MODEL"] == "resnet50":
-    model = models.resnet.resnet50(num_classes=CONFIGS["DATA"]["NUM_CLASSES"], cifar=True)
-
-elif CONFIGS["MODEL"]["MODEL"] == "msnet34":
-    model = msnet.MSNet34(num_classes=CONFIGS["DATA"]["NUM_CLASSES"], cifar=True)
-
-elif CONFIGS["MODEL"]["MODEL"] == "msnet50":
-    model = msnet.MSNet50(num_classes=CONFIGS["DATA"]["NUM_CLASSES"], cifar=True)
-
-elif CONFIGS["MODEL"]["MODEL"] == "msnet1.msnet34":
-    model = msnet1.msnet34(num_classes=CONFIGS["DATA"]["NUM_CLASSES"], cifar=True)
-
-elif CONFIGS["MODEL"]["MODEL"] == "msnet1.msnet50":
-    model = msnet1.msnet50(num_classes=CONFIGS["DATA"]["NUM_CLASSES"], cifar=True)
-
-else:
-    raise ValueError("Unknown model: %s" % args.model)
+model = CONFIGS["MODEL"]["MODEL"] + "(num_classes=%d, cifar=True)" % (CONFIGS["DATA"]["NUM_CLASSES"])
+model = eval(model)
 
 if CONFIGS["CUDA"]["DATA_PARALLEL"]:
     logger.info("Model Data Parallel")

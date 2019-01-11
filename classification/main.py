@@ -65,6 +65,15 @@ assert isfile(args.config)
 CONFIGS = utils.load_yaml(args.config)
 CONFIGS = utils.merge_config(args, CONFIGS)
 
+# Fix random seed for reproducibility
+# According to https://pytorch.org/docs/master/notes/randomness.html
+np.random.seed(CONFIGS["MISC"]["RAND_SEED"])
+torch.manual_seed(CONFIGS["MISC"]["RAND_SEED"])
+torch.cuda.manual_seed_all(CONFIGS["MISC"]["RAND_SEED"])
+torch.backends.cudnn.deterministic = True
+torch.backends.cudnn.benchmark = False
+
+
 if CONFIGS["VISDOM"]["VISDOM"] == True:
     import visdom
     vis = visdom.Visdom(port=CONFIGS["VISDOM"]["PORT"])
