@@ -281,10 +281,10 @@ def main():
         t = (CONFIGS["OPTIMIZER"]["EPOCHS"] - epoch - 1) * t      # remaining seconds
         remaining = utils.DayHourMinute(t)
 
-        logger.info("Epoch {0}/{1} finishied, {2} hours per epoch on average.\t"
+        logger.info("Epoch {0}/{1} finishied, auxiliaries saved to {2} .\t"
                     "Elapsed {elapsed.days:d} days {elapsed.hours:d} hours {elapsed.minutes:d} minutes.\t"
                     "Remaining {remaining.days:d} days {remaining.hours:d} hours {remaining.minutes:d} minutes.".format(
-                    epoch, CONFIGS["OPTIMIZER"]["EPOCHS"], hours_per_epoch, elapsed=elapsed, remaining=remaining))
+                    epoch, CONFIGS["OPTIMIZER"]["EPOCHS"], CONFIGS["MISC"]["TMP"], elapsed=elapsed, remaining=remaining))
 
     logger.info("Optimization done, ALL results saved to %s." % CONFIGS["MISC"]["TMP"])
 
