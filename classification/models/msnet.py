@@ -96,7 +96,7 @@ class MSNet(nn.Module):
             block_low
         )
         self.inplanes = planes*block.expansion
-        block_merge = self._make_layer(block, self.inplanes, planes, blocks=1, stride=1)
+        block_merge = self._make_layer(block, self.inplanes, planes, blocks=1, stride=2)
         self.layer1 = MSModule(block_high, block_low,
                                high_channels=self.inplanes//2,
                                low_channels=self.inplanes,
@@ -127,12 +127,11 @@ class MSNet(nn.Module):
             block_low
         )
         self.inplanes = planes*block.expansion
-        block_merge = self._make_layer(block, self.inplanes, planes, blocks=1, stride=2)
+        block_merge = self._make_layer(block, self.inplanes, planes, blocks=1, stride=1)
         self.layer3 = MSModule(block_high, block_low,
                                high_channels=self.inplanes//2,
                                low_channels=self.inplanes,
                                block_merge=block_merge, rescale=2)
-
 
         self.layer4 = self._make_layer(block, planes*block.expansion, 512, blocks=3, stride=2)
 
