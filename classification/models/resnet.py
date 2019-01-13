@@ -25,20 +25,6 @@ def conv1x1(in_planes, out_planes, stride=1):
     """1x1 convolution"""
     return nn.Conv2d(in_planes, out_planes, kernel_size=1, stride=stride, bias=False)
 
-def cifar_input():
-    return nn.Sequential(
-        nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1, bias=False),
-        nn.BatchNorm2d(64),
-        nn.ReLU(inplace=True)
-    )
-
-def resnet_input():
-    return nn.Sequential(
-        nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3, bias=False),
-        nn.BatchNorm2d(64),
-        nn.ReLU(inplace=True),
-        nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
-    )
 
 class BasicBlock(nn.Module):
     expansion = 1
@@ -118,9 +104,18 @@ class ResNet(nn.Module):
         self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3,
                                bias=False)
         if cifar:
-            self.conv1 = cifar_input()
+            self.conv1 = nn.Sequential(
+                nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1, bias=False),
+                nn.BatchNorm2d(64),
+                nn.ReLU(inplace=True)
+            )
         else:
-            self.conv1 = resnet_input()
+            self.conv1 = nn.Sequential(
+                nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3, bias=False),
+                nn.BatchNorm2d(64),
+                nn.ReLU(inplace=True),
+                nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
+            )
 
         self.layer1 = self._make_layer(block, 64, layers[0])
         self.layer2 = self._make_layer(block, 128, layers[1], stride=2)
