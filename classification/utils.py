@@ -25,8 +25,6 @@ def merge_config(args, yaml_config):
     if hasattr(args, "model") and args.model and args.model != yaml_config["MODEL"]["MODEL"]:
         yaml_config["MODEL"]["MODEL"] = args.model
 
-    if hasattr(args, "tmp") and args.tmp and args.tmp != yaml_config["MISC"]["TMP"]:
-        yaml_config["MISC"]["TMP"] = args.tmp
 
     # Optimizer
     if hasattr(args, "lr") and args.lr and args.lr != yaml_config["OPTIMIZER"]["LR"]:
@@ -41,6 +39,14 @@ def merge_config(args, yaml_config):
     
     if hasattr(args, "visport") and args.visport != yaml_config["VISDOM"]["PORT"]:
         yaml_config["VISDOM"]["PORT"] = args.visport
+
+    # MISC
+    if yaml_config["MISC"]["TMP"] == "" or yaml_config["MISC"]["TMP"] is None:
+        yaml_config["MISC"]["TMP"] = yaml_config["DATA"]["DATASET"] + "-" + yaml_config["MODEL"]["MODEL"]
+        yaml_config["MISC"]["TMP"] = join("tmp", yaml_config["MISC"]["TMP"])
+
+    if hasattr(args, "tmp") and args.tmp and args.tmp != yaml_config["MISC"]["TMP"]:
+        yaml_config["MISC"]["TMP"] = args.tmp
 
     return yaml_config
 
