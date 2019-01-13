@@ -20,7 +20,7 @@ from vltools.pytorch import save_checkpoint, AverageMeter, ilsvrc2012, accuracy
 import vltools.pytorch as vlpytorch
 import utils, models
 
-from models import msnet1, msnet2, msnet3, msnet4, resnet_sandglass
+from models import msnet, msnet1, msnet2, msnet3, msnet4, resnet_sandglass
 from torchvision.models import resnet
 
 parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
