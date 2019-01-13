@@ -127,10 +127,19 @@ class MSNet(nn.Module):
     def _make_layer(self, block, inplanes, planes, blocks, stride=1):
         downsample = None
         if stride != 1 or inplanes != planes * block.expansion:
-            downsample = nn.Sequential(
-                conv1x1(inplanes, planes * block.expansion, stride),
-                nn.BatchNorm2d(planes * block.expansion),
-            )
+            if stride == 1:
+                downsample = nn.Sequential(
+                    conv1x1(inplanes, planes * block.expansion, 1),
+                    nn.BatchNorm2d(planes * block.expansion),
+                )
+            elif stride == 2:
+                downsample = nn.Sequential(
+                    nn.AvgPool2d(kernel_size=2, stride=2),
+                    conv1x1(inplanes, planes * block.expansion, 1),
+                    nn.BatchNorm2d(planes * block.expansion),
+                )
+            else:
+                raise ValueError("stride=%d" % stride)
 
         layers = []
         layers.append(block(inplanes, planes, stride, downsample))
