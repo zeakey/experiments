@@ -1,0 +1,33 @@
+DATA:
+  DATASET: "ilsvrc2012"
+  DIR: "/media/data0/ilsvrc12"
+  BS: 256
+  NUM_CLASSES: 1000
+
+MODEL:
+  MODEL: "resnet.resnet50"
+
+OPTIMIZER:
+  TYPE: SGD
+  WEIGHT_DECAY: 0.0001
+  LR: 0.1
+  GAMMA: 0.1
+  MOMENTUM: 0.9
+  WARMUP_EPOCHS: 0
+  MILESTONES: [30, 60, 90]
+  EPOCHS: 110
+
+CUDA:
+  CUDA: True
+  GPU_ID: 0
+  DATA_PARALLEL: True
+
+VISDOM:
+  VISDOM: True
+  PORT: 8097
+
+MISC:
+  LOGFREQ: 20
+  TMP: ""
+  RAND_SEED: 7
+
