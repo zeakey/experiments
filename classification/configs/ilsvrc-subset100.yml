@@ -5,7 +5,7 @@ DATA:
   NUM_CLASSES: 100
 
 MODEL:
-  MODEL: "resnet.resnet34"
+  MODEL: "resnet.resnet50"
 
 OPTIMIZER:
   TYPE: SGD
@@ -28,6 +28,6 @@ VISDOM:
 
 MISC:
   LOGFREQ: 20
-  TMP: "tmp/ilsvrc-subset100"
+  TMP: ""
   RAND_SEED: 7
 
