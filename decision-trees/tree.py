@@ -44,5 +44,6 @@ class Tree(nn.Module):
         tmp = tmp.view(bs, self.num_leaf)
 
         # print(self.pi.data)
-        return torch.mm(tmp, F.softmax(self.pi, dim=1))
+        self.pi.data /= self.pi.data.sum()
+        return torch.mm(tmp, self.pi)
 

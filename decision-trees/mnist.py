@@ -31,7 +31,7 @@ class LeNet(nn.Module):
 
         self.ip1 = nn.Linear(800, 256)
         # self.ip2 = nn.Linear(512, 10)
-        self.ip2 = Forest(in_features=256, num_trees=5, tree_depth=8, num_classes=10).cuda()
+        self.ip2 = Forest(in_features=256, num_trees=5, tree_depth=3, num_classes=10).cuda()
     
     def forward(self, x):
 
@@ -54,7 +54,18 @@ criterion = nn.CrossEntropyLoss()
 for name, p in model.named_parameters():
     print(name, p.shape)
 
-optimizer = optim.Adam(model.parameters(), lr=0.01, weight_decay=1e-5)
+weights = []
+pi = []
+
+for name, p in model.named_parameters():
+    if 'pi' in name:
+        print(name)
+        pi.append(p)
+    else:
+        weights.append(p)
+
+optimizer = optim.Adam([{"params": pi, "weight_decay": 0},
+                        {"params": weights}], lr=0.001, weight_decay=1e-5)
 
 def main():
 
