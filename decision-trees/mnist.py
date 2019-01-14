@@ -69,14 +69,14 @@ optimizer = optim.Adam([{"params": pi, "weight_decay": 0},
 
 def main():
 
-    trn_acc1 = AverageMeter()
-    val_acc1 = AverageMeter()
-
-    trn_loss = AverageMeter()
-    val_loss = AverageMeter()
 
     for epoch in range(30):
+        
+        trn_acc1 = AverageMeter()
+        trn_loss = AverageMeter()
+
         for it, (data, target) in enumerate(train_loader):
+
             data = data.cuda()
             target = target.cuda()
             output = model(data)
@@ -95,6 +95,9 @@ def main():
         
         logger.info("Training epoch %d done, avg loss=%.3f, avg accuracy=%.3f" % (epoch, trn_loss.avg, trn_acc1.avg))
         
+        val_loss = AverageMeter()
+        val_acc1 = AverageMeter()
+
         for it, (data, target) in enumerate(val_loader):
             data = data.cuda()
             target = target.cuda()
