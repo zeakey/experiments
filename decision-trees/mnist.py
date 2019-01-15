@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.optim as optim
 import torchvision
 from forest import Forest
@@ -49,17 +50,11 @@ os.makedirs("tmp", exist_ok=True)
 logger = Logger("tmp/mnist.log.txt")
 
 model = LeNet().cuda()
-criterion = nn.CrossEntropyLoss()
-
-for name, p in model.named_parameters():
-    print(name, p.shape)
 
 weights = []
 pi = []
-
 for name, p in model.named_parameters():
     if 'pi' in name:
-        print(name)
         pi.append(p)
     else:
         weights.append(p)
@@ -68,7 +63,6 @@ optimizer = optim.Adam([{"params": pi, "weight_decay": 0},
                         {"params": weights}], lr=0.001, weight_decay=1e-5)
 
 def main():
-
 
     for epoch in range(30):
         
@@ -80,7 +74,7 @@ def main():
             data = data.cuda()
             target = target.cuda()
             output = model(data)
-            loss = criterion(output, target)
+            loss = F.nll_loss(output, target)
 
             optimizer.zero_grad()
             loss.backward()

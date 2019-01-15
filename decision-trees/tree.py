@@ -40,10 +40,7 @@ class Tree(nn.Module):
             start = end
             end = start + 2 ** (d + 1)
 
-        # self.pi.data = F.softmax(self.pi, dim=1)
         tmp = tmp.view(bs, self.num_leaf)
 
-        # print(self.pi.data)
-        self.pi.data /= self.pi.data.sum()
-        return torch.mm(tmp, self.pi)
+        return torch.mm(tmp, F.softmax(self.pi, dim=1))
 
