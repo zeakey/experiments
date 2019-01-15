@@ -96,7 +96,7 @@ def main():
             data = data.cuda()
             target = target.cuda()
             output = model(data)
-            loss = criterion(output, target)
+            loss = F.nll_loss(output, target)
 
             optimizer.zero_grad()
             loss.backward()
