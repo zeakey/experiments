@@ -30,9 +30,8 @@ class LeNet(nn.Module):
         self.conv1 = nn.Conv2d(1, 20, kernel_size=5)
         self.conv2 = nn.Conv2d(20, 50, kernel_size=5)
 
-        self.ip1 = nn.Linear(800, 256)
-        # self.ip2 = nn.Linear(512, 10)
-        self.ip2 = Forest(in_features=256, num_trees=5, tree_depth=3, num_classes=10).cuda()
+        self.ip1 = nn.Linear(800, 128)
+        self.ip2 = Forest(in_features=128, num_trees=8, tree_depth=5, num_classes=10)
     
     def forward(self, x):
 
@@ -74,7 +73,7 @@ def main():
             data = data.cuda()
             target = target.cuda()
             output = model(data)
-            loss = F.nll_loss(output, target)
+            loss = F.nll_loss(torch.log(output), target)
 
             optimizer.zero_grad()
             loss.backward()
@@ -96,7 +95,7 @@ def main():
             data = data.cuda()
             target = target.cuda()
             output = model(data)
-            loss = F.nll_loss(output, target)
+            loss = F.nll_loss(torch.log(output), target)
 
             optimizer.zero_grad()
             loss.backward()
@@ -108,9 +107,6 @@ def main():
             val_loss.update(loss.item(), data.size(0))
             
         logger.info("Testing epoch %d done, avg loss=%.3f, avg accuracy=%.3f" % (epoch, val_loss.avg, val_acc1.avg))
-    
-    
-            
 
 if __name__ == "__main__":
     main()
