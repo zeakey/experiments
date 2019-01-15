@@ -6,6 +6,9 @@ import torchvision
 from forest import Forest
 from vltools import Logger
 from vltools.pytorch import AverageMeter, accuracy
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 import os
 
 transform = torchvision.transforms.Compose([
@@ -32,7 +35,7 @@ class LeNet(nn.Module):
 
         self.ip1 = nn.Linear(800, 128)
         self.ip2 = Forest(in_features=128, num_trees=8, tree_depth=5, num_classes=10)
-    
+
     def forward(self, x):
 
         x = self.relu(self.pool(self.conv1(x)))
@@ -62,6 +65,7 @@ optimizer = optim.Adam([{"params": pi, "weight_decay": 0},
                         {"params": weights}], lr=0.001, weight_decay=1e-5)
 
 def main():
+    acc_record = []
 
     for epoch in range(30):
         
@@ -101,12 +105,16 @@ def main():
             loss.backward()
             optimizer.step()
 
-
             acc1 = accuracy(output, target)[0]
             val_acc1.update(acc1.item(), data.size(0))
             val_loss.update(loss.item(), data.size(0))
-            
+
         logger.info("Testing epoch %d done, avg loss=%.3f, avg accuracy=%.3f" % (epoch, val_loss.avg, val_acc1.avg))
+        acc_record.append(val_acc1.avg)
+
+    plt.plot(acc_record, "r")
+    plt.grid()
+    plt.savefig("tmp/mnist_accuracy.pdf")
 
 if __name__ == "__main__":
     main()
