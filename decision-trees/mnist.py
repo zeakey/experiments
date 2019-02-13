@@ -9,7 +9,10 @@ from vltools.pytorch import AverageMeter, accuracy
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-import os
+import os, numpy as np
+
+NUM_TREES = 8
+TREE_DEPTH = 5
 
 transform = torchvision.transforms.Compose([
     torchvision.transforms.ToTensor(),
@@ -34,7 +37,7 @@ class LeNet(nn.Module):
         self.conv2 = nn.Conv2d(20, 50, kernel_size=5)
 
         self.ip1 = nn.Linear(800, 128)
-        self.ip2 = Forest(in_features=128, num_trees=8, tree_depth=5, num_classes=10)
+        self.ip2 = Forest(in_features=128, num_trees=NUM_TREES, tree_depth=TREE_DEPTH, num_classes=10)
 
     def forward(self, x):
 
@@ -108,6 +111,18 @@ def main():
             acc1 = accuracy(output, target)[0]
             val_acc1.update(acc1.item(), data.size(0))
             val_loss.update(loss.item(), data.size(0))
+
+        fig, axes = plt.subplots(NUM_TREES, pow(2, TREE_DEPTH-1))
+        treeid = 0
+        for name, p in model.named_parameters():
+            if "pi" in name:
+                p = torch.softmax(p.data, dim=1).cpu().numpy()
+                for l in range(p.shape[0]):
+                    axes[treeid, l].bar(np.arange(10), p[l, :])
+                    axes[treeid, l].set_xticks([])
+                    axes[treeid, l].set_yticks([])
+                treeid += 1
+        plt.savefig("tmp/epoch%d-leaf-nodes.pdf" % epoch)
 
         logger.info("Testing epoch %d done, avg loss=%.3f, avg accuracy=%.3f" % (epoch, val_loss.avg, val_acc1.avg))
         acc_record.append(val_acc1.avg)
