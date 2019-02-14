@@ -12,7 +12,7 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import os, sys, argparse, time, shutil, visdom
 from os.path import join, split, isdir, isfile, dirname, abspath
-from cacd import CACDDataset
+from dataloader import CACDDataset
 import vltools
 from vltools import Logger
 from vltools import image as vlimage
@@ -26,18 +26,14 @@ parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                     help='manual epoch number (useful on restarts)')
 parser.add_argument('--print-freq', default=20, type=int,
                     metavar='N', help='print frequency (default: 10)')
-
-parser.add_argument('--visport', default=8097, type=int, metavar='N', help='Visdom port')
-
 # by default, arguments bellow will come from a config file
-parser.add_argument('--model', metavar='STR', default=None, help='model')
 parser.add_argument('--data', metavar='DIR', default=None, help='path to dataset')
 parser.add_argument('--num_classes', default=None, type=int, metavar='N', help='Number of classes')
 parser.add_argument('--bs', '--batch-size', default=256, type=int,
                     metavar='N', help='mini-batch size')
 parser.add_argument('--epochs', default=20, type=int, metavar='N',
                     help='number of total epochs to run')
-parser.add_argument('--lr', '--learning-rate', default=None, type=float,
+parser.add_argument('--lr', '--learning-rate', default=0.1, type=float,
                     metavar='LR', help='initial learning rate')
 parser.add_argument('--resume', default=None, type=str, metavar='PATH',
                     help='path to latest checkpoint')
@@ -55,17 +51,25 @@ torch.manual_seed(1)
 torch.cuda.manual_seed_all(1)
 torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
-
-model = torchvision.models.resnet.resnet18(num_classes=(62-14+1))
-pretrained = torchvision.models.resnet.resnet18(pretrained=True)
-pretrained = list(model.children())[:-1]
-pretrained= torch.nn.Sequential(*pretrained)
-model.load_state_dict(pretrained.state_dict(), strict=False)
-model.cuda(device=args.gpu)
+# model = torchvision.models.vgg.vgg16(pretrained=False)
+# for name, p in model.named_parameters():
+#     print(name, ": ", p.data.mean(), p.data.std())
+# print("========================")
+model = torchvision.models.vgg.vgg16(pretrained=True)
+# for name, p in model.named_parameters():
+#     print(name, ": ", p.data.mean(), p.data.std())
+# print("========================")
+classifier = list(model.classifier.children())
+classifier[-1] = nn.Linear(4096, 62-14+1)
+model.classifier = nn.Sequential(*classifier)
+# for name, p in model.named_parameters():
+#     print(name, ": ", p.data.mean(), p.data.std())
+# print("========================")
+model.cuda()
 
 optimizer = torch.optim.SGD(
     model.parameters(),
-    lr=0.1,
+    lr=args.lr,
     momentum=0.9,
     weight_decay=1e-4
 )
@@ -111,7 +115,8 @@ def main():
     best_acc1 = 0
     acc1_record = []
     acc5_record = []
-    mae_record = []
+    train_mae_record = []
+    test_mae_record = []
     loss_record = []
     lr_record = []
     # optionally resume from a checkpoint
@@ -128,28 +133,28 @@ def main():
         else:
             logger.info("=> no checkpoint found at '{}'".format(args.resume))
 
-    start_time = time.time()
     for epoch in range(args.start_epoch, args.epochs):
 
         # train and evaluate
-        loss = train(train_loader, epoch)
-        acc1, acc5, mae = validate(test_loader)
+        loss, train_mae= train(train_loader, epoch)
+        acc1, acc5, test_mae = validate(test_loader)
         scheduler.step()
 
         # record stats
         loss_record.append(loss)
         acc1_record.append(acc1)
         acc5_record.append(acc5)
-        mae_record.append(mae)
+        train_mae_record.append(train_mae)
+        test_mae_record.append(test_mae)
         lr_record.append(optimizer.param_groups[0]["lr"])
 
         # remember best prec@1 and save checkpoint
         is_best = acc1 > best_acc1
         best_acc1 = max(acc1_record)
         best_acc5 = max(acc5_record)
-        logger.info("Best acc1=%.3f" % best_acc1)
-        logger.info("Best acc5=%.3f" % best_acc5)
-        logger.info("Best MAE=%.3f" % min(mae_record))
+        logger.info("Best acc1=%.3f, best train-mae=%.3f, best test-mae=%.3f" % \
+                    (best_acc1, min(train_mae_record), min(test_mae_record)))
+
         save_checkpoint({
             'epoch': epoch + 1,
             'state_dict': model.state_dict(),
@@ -159,7 +164,7 @@ def main():
             }, is_best, path=args.tmp)
 
         # We continously save records in case of interupt
-        fig, axes = plt.subplots(1, 4, figsize=(12, 4))
+        fig, axes = plt.subplots(1, 4, figsize=(16, 4))
         axid = 0
         axes[axid].plot(acc1_record, color='r', linewidth=2)
         axes[axid].plot(acc5_record, color='g', linewidth=2)
@@ -170,11 +175,13 @@ def main():
         axes[axid].set_ylabel("Precision")
 
         axid += 1
-        axes[axid].plot(mae_record)
+        axes[axid].plot(train_mae_record)
+        axes[axid].plot(test_mae_record)
         axes[axid].grid(alpha=0.5, linestyle='dotted', linewidth=2, color='black')
-        axes[axid].legend(["MAE (Best=%.3f)" % min(mae_record)], loc="upper right")
+        axes[axid].legend(["Train-MAE (Best=%.3f)" % min(train_mae_record),
+                           "Test-MAE (Best=%.3f)" % min(test_mae_record)], loc="upper right")
         axes[axid].set_xlabel("Epoch")
-        axes[axid].set_ylabel("Loss")
+        axes[axid].set_ylabel("MAE")
 
         axid += 1
         axes[axid].plot(loss_record)
@@ -245,7 +252,7 @@ def train(train_loader, epoch):
         batch_time.update(time.time() - end)
         end = time.time()
         lr = optimizer.param_groups[0]["lr"]
-        if i % 20 == 0:
+        if i % args.print_freq == 0:
 
             logger.info('Epoch[{0}/{1}] Iter[{2}/{3}]\t'
                   'Batch Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
@@ -259,7 +266,7 @@ def train(train_loader, epoch):
                    batch_time=batch_time, data_time=data_time, loss=losses, top1=top1, top5=top5,
                    mae=mae, lr=lr))
 
-    return losses.avg
+    return losses.avg, mae.avg
 
 def validate(test_loader):
     batch_time = AverageMeter()
