@@ -19,6 +19,10 @@ from vltools import image as vlimage
 from vltools.pytorch import save_checkpoint, AverageMeter, ilsvrc2012, accuracy
 import vltools.pytorch as vlpytorch
 
+def MAE(prediction, target):
+    assert prediction.squeeze().ndimension() == 2, prediction.squeeze().shape
+    assert target.squeeze().ndimension() == 1
+    return torch.abs(target - torch.argmax(prediction, dim=1)).float().mean().item()
 
 parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
 # arguments from command line
@@ -106,6 +110,10 @@ train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.bs, sh
                                            num_workers=8, pin_memory=True)
 test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=args.bs, shuffle=False,
                                            num_workers=8, pin_memory=True)
+train_loss_all = []
+test_loss_all = []
+train_mae_all = []
+test_mae_all = []
 
 def main():
 
@@ -163,7 +171,7 @@ def main():
             'optimizer' : optimizer.state_dict(),
             }, is_best, path=args.tmp)
 
-        # We continously save records in case of interupt
+        # continously save records in case of interupt
         fig, axes = plt.subplots(1, 4, figsize=(16, 4))
         axid = 0
         axes[axid].plot(acc1_record, color='r', linewidth=2)
@@ -197,17 +205,37 @@ def main():
         axes[axid].set_xlabel("Epoch")
         axes[axid].set_ylabel("Learning Rate")
 
-
         plt.tight_layout()
-        plt.savefig(join(args.tmp, 'record.pdf'))
+        plt.savefig(join(args.tmp, 'epoch-record.pdf'))
         plt.close(fig)
 
-        record = dict({'acc1': np.array(acc1_record), 'acc5': np.array(acc5_record),
-                       'loss_record': np.array(loss_record), "lr_record": np.array(lr_record)})
+        fig, axes = plt.subplots(1, 2, figsize=(8, 4))
+        axid = 0
+        axes[axid].plot(train_loss_all, color='r', linewidth=2)
+        axes[axid].plot(test_loss_all, color='g', linewidth=2)
+        axes[axid].legend(["Train loss", "Test loss"], loc="lower right")
+        axes[axid].grid(alpha=0.5, linestyle='dotted', linewidth=2, color='black')
+        axes[axid].set_xlabel("Iter")
+        axes[axid].set_ylabel("Loss")
+
+        axid += 1
+        axes[axid].plot(train_mae_all, color='r', linewidth=2)
+        axes[axid].plot(test_mae_all, color='g', linewidth=2)
+        axes[axid].legend(["Train MAE", "Test MAE"], loc="lower right")
+        axes[axid].grid(alpha=0.5, linestyle='dotted', linewidth=2, color='black')
+        axes[axid].set_xlabel("Iter")
+        axes[axid].set_ylabel("MAE")
+
+        plt.tight_layout()
+        plt.savefig(join(args.tmp, 'iter-record.pdf'))
+        plt.close(fig)
+
+        record = dict({'acc1': np.array(acc1_record),
+                       'acc5': np.array(acc5_record),
+                       'loss_record': np.array(loss_record),
+                       'lr_record': np.array(lr_record)})
 
         savemat(join(args.tmp, 'record.mat'), record)
-
-
 
     logger.info("Optimization done, ALL results saved to %s." % args.tmp)
 
@@ -232,13 +260,15 @@ def train(train_loader, epoch):
         output = model(data)
         loss = criterion(output, target)
 
-
         # measure accuracy and record loss
         acc1, acc5 = accuracy(output, target, topk=(1, 5))
         losses.update(loss.item(), data.size(0))
         top1.update(acc1.item(), data.size(0))
         top5.update(acc5.item(), data.size(0))
-        mae.update(torch.abs(target - torch.argmax(output, dim=1)).float().mean().item())
+        mae.update(MAE(output, target), data.size(0))
+
+        train_loss_all.append(losses.val)
+        train_mae_all.append(mae.val)
 
         # compute gradient and do SGD step
         optimizer.zero_grad()
@@ -291,7 +321,11 @@ def validate(test_loader):
             losses.update(loss.item(), data.size(0))
             top1.update(acc1.item(), data.size(0))
             top5.update(acc5.item(), data.size(0))
-            mae.update(torch.abs(target - torch.argmax(output, dim=1)).float().mean().item())
+            mae.update(MAE(output, target), data.size(0))
+
+            test_loss_all.append(losses.val)
+            test_mae_all.append(mae.val)
+
             # measure elapsed time
             batch_time.update(time.time() - end)
             end = time.time()
