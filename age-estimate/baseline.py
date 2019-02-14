@@ -16,8 +16,9 @@ from dataloader import CACDDataset
 import vltools
 from vltools import Logger
 from vltools import image as vlimage
-from vltools.pytorch import save_checkpoint, AverageMeter, ilsvrc2012, accuracy
+from vltools.pytorch import save_checkpoint, AverageMeter, accuracy
 import vltools.pytorch as vlpytorch
+from vltools.tcm import CosAnnealingLR
 
 def MAE(prediction, target):
     assert prediction.squeeze().ndimension() == 2, prediction.squeeze().shape
@@ -39,6 +40,8 @@ parser.add_argument('--epochs', default=20, type=int, metavar='N',
                     help='number of total epochs to run')
 parser.add_argument('--lr', '--learning-rate', default=0.01, type=float,
                     metavar='LR', help='initial learning rate')
+parser.add_argument('--wd', '--weight-decay', default=1e-4, type=float,
+                    metavar='LR', help='weight decay')
 parser.add_argument('--resume', default=None, type=str, metavar='PATH',
                     help='path to latest checkpoint')
 parser.add_argument('--tmp', help='tmp folder', default="tmp")
@@ -75,16 +78,18 @@ optimizer = torch.optim.SGD(
     model.parameters(),
     lr=args.lr,
     momentum=0.9,
-    weight_decay=1e-4
+    weight_decay=args.wd
 )
 logger.info("Model details:")
 logger.info(model)
 logger.info("Optimizer details:")
 logger.info(optimizer)
 
-scheduler = lr_scheduler.MultiStepLR(optimizer,
-                      milestones=[4, 8, 12, 16],
-                      gamma=0.5)
+# scheduler = lr_scheduler.MultiStepLR(optimizer,
+#                       milestones=[4, 8, 12, 16],
+#                       gamma=0.5)
+
+# scheduler = lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
 
 # loss function
 criterion = torch.nn.CrossEntropyLoss()
@@ -114,6 +119,10 @@ train_loss_all = []
 test_loss_all = []
 train_mae_all = []
 test_mae_all = []
+lr_all = []
+
+scheduler = CosAnnealingLR(len(train_loader)*args.epochs, lr_max=args.lr,
+                           warmup_iters=len(train_loader)*2)
 
 def main():
 
@@ -146,7 +155,6 @@ def main():
         # train and evaluate
         loss, train_mae= train(train_loader, epoch)
         acc1, acc5, test_mae = validate(test_loader)
-        scheduler.step()
 
         # record stats
         loss_record.append(loss)
@@ -248,6 +256,7 @@ def main():
     logger.info("Optimization done, ALL results saved to %s." % args.tmp)
 
 def train(train_loader, epoch):
+
     batch_time = AverageMeter()
     data_time = AverageMeter()
     losses = AverageMeter()
@@ -281,15 +290,20 @@ def train(train_loader, epoch):
         # compute gradient and do SGD step
         optimizer.zero_grad()
 
- 
         loss.backward()
 
+        # adjust lr and update params
+        lr = scheduler.step()
+        lr_all.append(lr)
+        for pg in optimizer.param_groups:
+            pg["lr"] = lr
         optimizer.step()
 
         # measure elapsed time
         batch_time.update(time.time() - end)
         end = time.time()
         lr = optimizer.param_groups[0]["lr"]
+
         if i % args.print_freq == 0:
 
             logger.info('Epoch[{0}/{1}] Iter[{2}/{3}]\t'
@@ -299,7 +313,7 @@ def train(train_loader, epoch):
                   'Prec@1 {top1.val:.3f} ({top1.avg:.3f})\t'
                   'Prec@5 {top5.val:.3f} ({top5.avg:.3f})\t'
                   'MAE {mae.val:.3f} ({mae.avg:.3f})\t'
-                  'LR: {lr:.4f}'.format(
+                  'LR: {lr:}'.format(
                    epoch, args.epochs, i, len(train_loader),
                    batch_time=batch_time, data_time=data_time, loss=losses, top1=top1, top5=top5,
                    mae=mae, lr=lr))
@@ -307,11 +321,13 @@ def train(train_loader, epoch):
     return losses.avg, mae.avg
 
 def validate(test_loader):
+
     batch_time = AverageMeter()
     losses = AverageMeter()
     top1 = AverageMeter()
     top5 = AverageMeter()
     mae = AverageMeter()
+
     # switch to evaluate mode
     model.eval()
 
