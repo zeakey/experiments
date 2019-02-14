@@ -37,7 +37,7 @@ parser.add_argument('--bs', '--batch-size', default=256, type=int,
                     metavar='N', help='mini-batch size')
 parser.add_argument('--epochs', default=20, type=int, metavar='N',
                     help='number of total epochs to run')
-parser.add_argument('--lr', '--learning-rate', default=0.1, type=float,
+parser.add_argument('--lr', '--learning-rate', default=0.01, type=float,
                     metavar='LR', help='initial learning rate')
 parser.add_argument('--resume', default=None, type=str, metavar='PATH',
                     help='path to latest checkpoint')
@@ -83,8 +83,8 @@ logger.info("Optimizer details:")
 logger.info(optimizer)
 
 scheduler = lr_scheduler.MultiStepLR(optimizer,
-                      milestones=[6, 9],
-                      gamma=0.1)
+                      milestones=[4, 8, 12, 16],
+                      gamma=0.5)
 
 # loss function
 criterion = torch.nn.CrossEntropyLoss()
@@ -209,33 +209,41 @@ def main():
         plt.savefig(join(args.tmp, 'epoch-record.pdf'))
         plt.close(fig)
 
-        fig, axes = plt.subplots(1, 2, figsize=(8, 4))
-        axid = 0
-        axes[axid].plot(train_loss_all, color='r', linewidth=2)
-        axes[axid].plot(test_loss_all, color='g', linewidth=2)
-        axes[axid].legend(["Train loss", "Test loss"], loc="lower right")
-        axes[axid].grid(alpha=0.5, linestyle='dotted', linewidth=2, color='black')
-        axes[axid].set_xlabel("Iter")
-        axes[axid].set_ylabel("Loss")
-
-        axid += 1
-        axes[axid].plot(train_mae_all, color='r', linewidth=2)
-        axes[axid].plot(test_mae_all, color='g', linewidth=2)
-        axes[axid].legend(["Train MAE", "Test MAE"], loc="lower right")
-        axes[axid].grid(alpha=0.5, linestyle='dotted', linewidth=2, color='black')
-        axes[axid].set_xlabel("Iter")
-        axes[axid].set_ylabel("MAE")
-
-        plt.tight_layout()
-        plt.savefig(join(args.tmp, 'iter-record.pdf'))
-        plt.close(fig)
-
         record = dict({'acc1': np.array(acc1_record),
                        'acc5': np.array(acc5_record),
                        'loss_record': np.array(loss_record),
-                       'lr_record': np.array(lr_record)})
+                       'lr_record': np.array(lr_record),
+                       'train_loss_all': np.array(train_loss_all),
+                       'test_loss_all': np.array(test_loss_all),
+                       'train_mae_all': np.array(train_mae_all),
+                       'test_mae_all': np.array(test_mae_all)})
 
         savemat(join(args.tmp, 'record.mat'), record)
+
+    fig, axes = plt.subplots(2, 2, figsize=(16, 16))
+    axes[0, 0].plot(train_loss_all, color='r', linewidth=2)
+    axes[0, 0].grid(alpha=0.5, linestyle='dotted', linewidth=2, color='black')
+    axes[0, 0].set_xlabel("Iter")
+    axes[0, 0].set_ylabel("Train Loss")
+
+    axes[0, 1].plot(test_loss_all, color='r', linewidth=2)
+    axes[0, 1].grid(alpha=0.5, linestyle='dotted', linewidth=2, color='black')
+    axes[0, 1].set_xlabel("Iter")
+    axes[0, 1].set_ylabel("Test Loss")
+
+    axes[1, 0].plot(train_mae_all, color='r', linewidth=2)
+    axes[1, 0].grid(alpha=0.5, linestyle='dotted', linewidth=2, color='black')
+    axes[1, 0].set_xlabel("Iter")
+    axes[1, 0].set_ylabel("Train MAE")
+
+    axes[1, 1].plot(test_mae_all, color='r', linewidth=2)
+    axes[1, 1].grid(alpha=0.5, linestyle='dotted', linewidth=2, color='black')
+    axes[1, 1].set_xlabel("Iter")
+    axes[1, 1].set_ylabel("Test MAE")
+
+    plt.tight_layout()
+    plt.savefig(join(args.tmp, 'iter-record.pdf'))
+    plt.close(fig)
 
     logger.info("Optimization done, ALL results saved to %s." % args.tmp)
 
