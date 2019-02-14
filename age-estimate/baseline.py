@@ -28,7 +28,7 @@ parser.add_argument('--print-freq', default=20, type=int,
                     metavar='N', help='print frequency (default: 10)')
 # by default, arguments bellow will come from a config file
 parser.add_argument('--data', metavar='DIR', default=None, help='path to dataset')
-parser.add_argument('--num_classes', default=None, type=int, metavar='N', help='Number of classes')
+parser.add_argument('--num_classes', default=62-14+1, type=int, metavar='N', help='Number of classes')
 parser.add_argument('--bs', '--batch-size', default=256, type=int,
                     metavar='N', help='mini-batch size')
 parser.add_argument('--epochs', default=20, type=int, metavar='N',
@@ -60,7 +60,7 @@ model = torchvision.models.vgg.vgg16(pretrained=True)
 #     print(name, ": ", p.data.mean(), p.data.std())
 # print("========================")
 classifier = list(model.classifier.children())
-classifier[-1] = nn.Linear(4096, 62-14+1)
+classifier[-1] = nn.Linear(4096, args.num_classes)
 model.classifier = nn.Sequential(*classifier)
 # for name, p in model.named_parameters():
 #     print(name, ": ", p.data.mean(), p.data.std())
@@ -88,14 +88,14 @@ criterion = torch.nn.CrossEntropyLoss()
 normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                         std=[0.229, 0.224, 0.225])
 
-train_dataset = CACDDataset("/home/kai/Code/age-trans/data/CACD2000-aligned-112x112", "name_age_train.txt",
+train_dataset = CACDDataset("CACD2000-aligned-112x112", "name_age_train.txt",
             transforms.Compose([
                 transforms.Resize(224),
                 transforms.RandomHorizontalFlip(),
                 transforms.ToTensor(),
                 normalize,
             ]))
-test_dataset = CACDDataset("/home/kai/Code/age-trans/data/CACD2000-aligned-112x112", "name_age_test.txt",
+test_dataset = CACDDataset("CACD2000-aligned-112x112", "name_age_test.txt",
             transforms.Compose([
                 transforms.Resize(224),
                 transforms.ToTensor(),
