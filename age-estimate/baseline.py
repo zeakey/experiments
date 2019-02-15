@@ -130,14 +130,21 @@ def main():
 
     # records
     best_acc1 = 0
-    acc1_record = []
-    acc5_record = []
+
+    test_acc1_record = []
+    test_acc5_record = []
+
     train_mae_record = []
     test_mae_record = []
-    loss_record = []
+
+    train_loss_record = []
+    test_loss_record = []
+
     lr_record = []
+
     # optionally resume from a checkpoint
     if args.resume:
+
         if isfile(args.resume):
             logger.info("=> loading checkpoint '{}'".format(args.resume))
             checkpoint = torch.load(args.resume)
@@ -153,21 +160,25 @@ def main():
     for epoch in range(args.start_epoch, args.epochs):
 
         # train and evaluate
-        loss, train_mae= train(train_loader, epoch)
-        acc1, acc5, test_mae = validate(test_loader)
+        train_loss, train_acc1, train_acc5, train_mae = train(train_loader, epoch)
+        test_loss, test_acc1, test_acc5, test_mae = validate(test_loader)
 
         # record stats
-        loss_record.append(loss)
-        acc1_record.append(acc1)
-        acc5_record.append(acc5)
+        train_loss_record.append(train_loss)
+        test_loss_record.append(test_loss)
+
+        test_acc1_record.append(test_acc1)
+        test_acc5_record.append(test_acc5)
+
         train_mae_record.append(train_mae)
         test_mae_record.append(test_mae)
+
         lr_record.append(optimizer.param_groups[0]["lr"])
 
         # remember best prec@1 and save checkpoint
-        is_best = acc1 > best_acc1
-        best_acc1 = max(acc1_record)
-        best_acc5 = max(acc5_record)
+        is_best = test_acc1 > best_acc1
+        best_acc1 = max(test_acc1_record)
+        best_acc5 = max(test_acc5_record)
         logger.info("Best acc1=%.3f, best train-mae=%.3f, best test-mae=%.3f" % \
                     (best_acc1, min(train_mae_record), min(test_mae_record)))
 
@@ -182,17 +193,19 @@ def main():
         # continously save records in case of interupt
         fig, axes = plt.subplots(1, 4, figsize=(16, 4))
         axid = 0
-        axes[axid].plot(acc1_record, color='r', linewidth=2)
-        axes[axid].plot(acc5_record, color='g', linewidth=2)
-        axes[axid].legend(['Top1 Accuracy (Best%.3f)' % max(acc1_record), 'Top5 Accuracy (Best%.3f)' % max(acc5_record)],
-                       loc="lower right")
+        axes[axid].plot(test_acc1_record, color='r', linewidth=2)
+        axes[axid].plot(test_acc5_record, color='g', linewidth=2)
+        axes[axid].legend(['Top1 Accuracy (Best%.3f)' % max(test_acc1_record),
+                           'Top5 Accuracy (Best%.3f)' % max(test_acc5_record)],
+                           loc="lower right")
+
         axes[axid].grid(alpha=0.5, linestyle='dotted', linewidth=2, color='black')
         axes[axid].set_xlabel("Epoch")
-        axes[axid].set_ylabel("Precision")
+        axes[axid].set_ylabel("Accuracy")
 
         axid += 1
-        axes[axid].plot(train_mae_record)
-        axes[axid].plot(test_mae_record)
+        axes[axid].plot(train_mae_record, color='r', linewidth=2)
+        axes[axid].plot(test_mae_record, color='g', linewidth=2)
         axes[axid].grid(alpha=0.5, linestyle='dotted', linewidth=2, color='black')
         axes[axid].legend(["Train-MAE (Best=%.3f)" % min(train_mae_record),
                            "Test-MAE (Best=%.3f)" % min(test_mae_record)], loc="upper right")
@@ -200,14 +213,15 @@ def main():
         axes[axid].set_ylabel("MAE")
 
         axid += 1
-        axes[axid].plot(loss_record)
+        axes[axid].plot(train_loss_record, color='r', linewidth=2)
+        axes[axid].plot(test_loss_record, color='g', linewidth=2)
         axes[axid].grid(alpha=0.5, linestyle='dotted', linewidth=2, color='black')
-        axes[axid].legend(["Loss"], loc="upper right")
+        axes[axid].legend(["Train Loss", "Test Loss"], loc="upper right")
         axes[axid].set_xlabel("Epoch")
         axes[axid].set_ylabel("Loss")
 
         axid += 1
-        axes[axid].plot(lr_record)
+        axes[axid].plot(lr_record, color="r", linewidth=2)
         axes[axid].grid(alpha=0.5, linestyle='dotted', linewidth=2, color='black')
         axes[axid].legend(["Learning Rate"], loc="upper right")
         axes[axid].set_xlabel("Epoch")
@@ -215,11 +229,13 @@ def main():
 
         plt.tight_layout()
         plt.savefig(join(args.tmp, 'epoch-record.pdf'))
+        plt.savefig(join(args.tmp, 'epoch-record.svg'))
         plt.close(fig)
 
-        record = dict({'acc1': np.array(acc1_record),
-                       'acc5': np.array(acc5_record),
-                       'loss_record': np.array(loss_record),
+        record = dict({'acc1': np.array(test_acc1_record),
+                       'acc5': np.array(test_acc5_record),
+                       'train_loss_record': np.array(train_loss_record),
+                       'test_loss_record': np.array(test_loss_record),
                        'lr_record': np.array(lr_record),
                        'train_loss_all': np.array(train_loss_all),
                        'test_loss_all': np.array(test_loss_all),
@@ -251,6 +267,7 @@ def main():
 
     plt.tight_layout()
     plt.savefig(join(args.tmp, 'iter-record.pdf'))
+    plt.savefig(join(args.tmp, 'iter-record.svg'))
     plt.close(fig)
 
     logger.info("Optimization done, ALL results saved to %s." % args.tmp)
@@ -318,7 +335,7 @@ def train(train_loader, epoch):
                    batch_time=batch_time, data_time=data_time, loss=losses, top1=top1, top5=top5,
                    mae=mae, lr=lr))
 
-    return losses.avg, mae.avg
+    return losses.avg, top1.avg, top5.avg, mae.avg
 
 def validate(test_loader):
 
@@ -363,7 +380,7 @@ def validate(test_loader):
 
         logger.info(' * Prec@1 {top1.avg:.3f} Prec@5 {top5.avg:.3f} MAE {mae.avg:.3f}'
               .format(top1=top1, top5=top5, mae=mae))
-    return top1.avg, top5.avg, mae.avg
+    return losses.avg, top1.avg, top5.avg, mae.avg
 
 if __name__ == '__main__':
     main()
