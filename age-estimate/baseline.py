@@ -58,20 +58,25 @@ torch.manual_seed(1)
 torch.cuda.manual_seed_all(1)
 torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
-# model = torchvision.models.vgg.vgg16(pretrained=False)
-# for name, p in model.named_parameters():
-#     print(name, ": ", p.data.mean(), p.data.std())
-# print("========================")
-model = torchvision.models.vgg.vgg16(pretrained=True)
-# for name, p in model.named_parameters():
-#     print(name, ": ", p.data.mean(), p.data.std())
-# print("========================")
-classifier = list(model.classifier.children())
-classifier[-1] = nn.Linear(4096, args.num_classes)
-model.classifier = nn.Sequential(*classifier)
-# for name, p in model.named_parameters():
-#     print(name, ": ", p.data.mean(), p.data.std())
-# print("========================")
+if False:
+    model = torchvision.models.vgg.vgg16(pretrained=False)
+    for name, p in model.named_parameters():
+        print(name, ": ", p.data.mean(), p.data.std())
+    print("========================")
+    model = torchvision.models.vgg.vgg16(pretrained=True)
+    for name, p in model.named_parameters():
+        print(name, ": ", p.data.mean(), p.data.std())
+    print("========================")
+    classifier = list(model.classifier.children())
+    classifier[-1] = nn.Linear(4096, args.num_classes)
+    model.classifier = nn.Sequential(*classifier)
+    for name, p in model.named_parameters():
+        print(name, ": ", p.data.mean(), p.data.std())
+    print("========================")
+else:
+    model = torchvision.models.resnet.resnet50(pretrained=True)
+    model.fc =  nn.Linear(512*4, args.num_classes)
+
 model.cuda()
 
 optimizer = torch.optim.SGD(
