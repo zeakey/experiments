@@ -105,6 +105,10 @@ logger.info(model)
 logger.info("Optimizer details:")
 logger.info(optimizer)
 
+logger.info("Initial parameters details:")
+for name, p in model.named_parameters():
+    logger.info("%s, shape=%s, std=%f, mean=%f" % (name, str(p.shape), p.std().item(), p.mean().item()))
+
 scheduler = lr_scheduler.MultiStepLR(optimizer,
                       milestones=CONFIGS["OPTIMIZER"]["MILESTONES"],
                       gamma=CONFIGS["OPTIMIZER"]["GAMMA"])
@@ -197,6 +201,11 @@ def main():
         loss = train(train_loader, epoch)
         acc1, acc5 = validate(val_loader)
         scheduler.step()
+
+        # log parameters details
+        logger.info("Epoch %d parameters details:" % epoch)
+        for name, p in model.named_parameters():
+            logger.info("%s, shape=%s, std=%f, mean=%f" % (name, str(p.shape), p.std().item(), p.mean().item()))
 
         # record stats
         loss_record.append(loss)
