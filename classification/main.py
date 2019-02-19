@@ -16,11 +16,12 @@ from os.path import join, split, isdir, isfile, dirname, abspath
 import vltools
 from vltools import Logger
 from vltools import image as vlimage
-from vltools.pytorch import save_checkpoint, AverageMeter, ilsvrc2012, accuracy
+from vltools.pytorch import save_checkpoint, AverageMeter, accuracy
+from vltools.pytorch.datasets import ilsvrc2012
 import vltools.pytorch as vlpytorch
 import utils, models
+from models import *
 
-from models import msnet, msnet1, msnet2, msnet3, msnet4, msnet4a, resnet_sandglass
 from torchvision.models import resnet
 
 parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
@@ -73,7 +74,6 @@ torch.cuda.manual_seed_all(CONFIGS["MISC"]["RAND_SEED"])
 torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 
-
 if CONFIGS["VISDOM"]["VISDOM"] == True:
     import visdom
     vis = visdom.Visdom(port=CONFIGS["VISDOM"]["PORT"])
@@ -85,6 +85,7 @@ logger = Logger(join(CONFIGS["MISC"]["TMP"], "log.txt"))
 
 # model and optimizer
 model = CONFIGS["MODEL"]["MODEL"] + "(num_classes=%d)" % (CONFIGS["DATA"]["NUM_CLASSES"])
+logger.info("Model: %s" % model)
 model = eval(model)
 
 if CONFIGS["CUDA"]["DATA_PARALLEL"]:
@@ -159,10 +160,10 @@ def main():
             num_workers=8, pin_memory=True)
 
     elif CONFIGS["DATA"]["DATASET"] == "cifar10":
-        train_loader, val_loader = vlpytorch.cifar10(CONFIGS["DATA"]["DIR"], bs=CONFIGS["DATA"]["BS"])
+        train_loader, val_loader = vlpytorch.datasets.cifar10(CONFIGS["DATA"]["DIR"], bs=CONFIGS["DATA"]["BS"])
 
     elif CONFIGS["DATA"]["DATASET"] == "cifar100":
-        train_loader, val_loader = vlpytorch.cifar100(CONFIGS["DATA"]["DIR"], bs=CONFIGS["DATA"]["BS"])
+        train_loader, val_loader = vlpytorch.datasets.cifar100(CONFIGS["DATA"]["DIR"], bs=CONFIGS["DATA"]["BS"])
 
     else:
         raise ValueError("Unknown dataset: %s. (Supported datasets: ilsvrc2012 | cifar10 | cifar100)" % CONFIGS["DATA"]["DATASET"])
