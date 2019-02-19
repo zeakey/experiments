@@ -4,20 +4,41 @@ import torch.nn as nn
 
 class PReLU(nn.Module):
 
-    def __init__(self, planes):
+    def __init__(self, planes, neg_slope=0.25, reduction=4):
         super(PReLU, self).__init__()
+        self.neg_slope = neg_slope
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
-        self.pos_slope = nn.Conv2d(in_channels=planes, out_channels=planes, kernel_size=1,
-                                groups=planes, bias=False)
-        self.bn = nn.BatchNorm2d(planes)
+
+        self.fc0 = nn.Sequential(
+            nn.Linear(planes, planes // reduction, bias=False),
+            nn.ReLU(inplace=True),
+            nn.Linear(planes // reduction, planes, bias=False),
+            nn.Sigmoid()
+        )
+
+        self.fc1 = nn.Sequential(
+            nn.Linear(planes, planes // reduction, bias=False),
+            nn.ReLU(inplace=True),
+            nn.Linear(planes // reduction, planes, bias=False),
+            nn.Sigmoid()
+        )
 
     def forward(self, x):
 
-        w = self.bn(self.pos_slope(self.avgpool(x)))
-        w = torch.sigmoid(w)
+        b, c, _, _ = x.size()
+        w = self.avgpool(x).view(b, c)
 
-        y = x * w.expand_as(x)
-        y[x < 0] *= 0
+        w0 = self.fc0(w).view(b, c, 1, 1)
+        w0 = w0.expand_as(x)
+        
+        w1 = self.fc1(w).view(b, c, 1, 1)
+        w1 = w1.expand_as(x)
+        w1 = w1 * self.neg_slope
+
+        y = torch.zeros_like(x)
+
+        y[x > 0] = x[x > 0] * w0[x > 0]
+        y[x < 0] = x[x < 0] * w1[x < 0]
 
         return y
 
