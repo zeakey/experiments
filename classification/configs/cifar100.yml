@@ -5,7 +5,7 @@ DATA:
   NUM_CLASSES: 100
 
 MODEL:
-  MODEL: "resnet18"
+  MODEL: "resnet.resnet18"
 
 OPTIMIZER:
   TYPE: SGD
@@ -14,13 +14,13 @@ OPTIMIZER:
   GAMMA: 0.1
   MOMENTUM: 0.9
   WARMUP_EPOCHS: 0
-  EPOCHS: 350
-  MILE_STONES: [150, 250]
+  EPOCHS: 150
+  MILESTONES: [80, 130]
 
 CUDA:
   CUDA: True
   GPU_ID: 0
-  DATA_PARALLEL: False
+  DATA_PARALLEL: True
 
 VISDOM:
   VISDOM: True
@@ -28,6 +28,6 @@ VISDOM:
 
 MISC:
   LOGFREQ: 20
-  TMP: "tmp/resnet18-cifar100"
+  TMP: "" # automatically deternined by dataset and model name
   RAND_SEED: 7
 
