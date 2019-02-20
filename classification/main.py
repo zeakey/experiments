@@ -202,11 +202,6 @@ def main():
         acc1, acc5 = validate(val_loader)
         scheduler.step()
 
-        # log parameters details
-        logger.info("Epoch %d parameters details:" % epoch)
-        for name, p in model.named_parameters():
-            logger.info("%s, shape=%s, std=%f, mean=%f" % (name, str(p.shape), p.std().item(), p.mean().item()))
-
         # record stats
         loss_record.append(loss)
         acc1_record.append(acc1)
@@ -219,6 +214,14 @@ def main():
         best_acc5 = max(acc5_record)
         logger.info("Best acc1=%.3f" % best_acc1)
         logger.info("Best acc5=%.3f" % best_acc5)
+
+        # log parameters details
+        logger.info("Epoch %d parameters details:" % epoch)
+        for name, p in model.named_parameters():
+            logger.info("%s, shape=%s, std=%f, mean=%f" % \
+                    (name, str(p.shape), p.std().item(), p.mean().item()))
+
+        # save checkpoint
         save_checkpoint({
             'epoch': epoch + 1,
             'state_dict': model.state_dict(),
@@ -248,7 +251,6 @@ def main():
         axes[2].legend(["Learning Rate"], loc="upper right")
         axes[2].set_xlabel("Epoch")
         axes[2].set_ylabel("Learning Rate")
-
 
         plt.tight_layout()
         plt.savefig(join(CONFIGS["MISC"]["TMP"], 'record.pdf'))
