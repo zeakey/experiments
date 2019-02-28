@@ -285,7 +285,7 @@ def train(train_loader, epoch):
         data = data.cuda(device=args.gpu)
 
         output = model(data)
-        loss = loss = torch.nn.functional.nll_loss(torch.log(output), target)
+        loss = torch.nn.functional.nll_loss(torch.log(output), target)
 
         # measure accuracy and record loss
         acc1, acc5 = accuracy(output, target, topk=(1, 5))
@@ -349,7 +349,7 @@ def validate(test_loader):
             data = data.cuda(device=args.gpu)
             # compute output
             output = model(data)
-            loss = criterion(output, target)
+            loss = torch.nn.functional.nll_loss(torch.log(output), target)
             # measure accuracy and record loss
             acc1, acc5 = accuracy(output, target, topk=(1, 5))
             losses.update(loss.item(), data.size(0))
