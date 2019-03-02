@@ -18,7 +18,7 @@ from vltools import Logger
 from vltools import image as vlimage
 from vltools.pytorch import save_checkpoint, AverageMeter, accuracy
 import vltools.pytorch as vlpytorch
-from vltools.tcm import CosAnnealingLR
+from vltools.tcm import CosAnnealingLR, StepLR
 
 import os, sys
 sys.path.insert(0, os.path.abspath("../decision-trees"))
@@ -74,18 +74,35 @@ for name, p in model.named_parameters():
 model.cuda()
 model = nn.DataParallel(model).cuda()
 
-optimizer = torch.optim.SGD(
-    model.parameters(),
+nn_params = []
+tree_params = []
+
+for name, p in model.named_parameters():
+    if "pi" in name:
+        tree_params.append(p)
+        logger.info("Tree parameter %s, shape=%s" % (name, p.data.shape))
+    else:
+        nn_params.append(p)
+        logger.info("NN parameter %s, shape=%s" % (name, p.data.shape))
+
+nn_optimizer = torch.optim.SGD(
+    nn_params,
+    lr=args.lr,
+    momentum=0.9,
+    weight_decay=args.wd
+)
+tree_optimizer = torch.optim.SGD(
+    tree_params,
     lr=args.lr,
     momentum=0.9,
     weight_decay=args.wd
 )
 logger.info("Model details:")
 logger.info(model)
-logger.info("Optimizer details:")
-logger.info(optimizer)
-
-scheduler = lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
+logger.info("NN Optimizer details:")
+logger.info(nn_optimizer)
+logger.info("Tree Optimizer details:")
+logger.info(tree_optimizer)
 
 normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                         std=[0.229, 0.224, 0.225])
@@ -114,8 +131,9 @@ train_mae_all = []
 test_mae_all = []
 lr_all = []
 
-scheduler = CosAnnealingLR(len(train_loader)*args.epochs, lr_max=args.lr,
-                           warmup_iters=len(train_loader)*2)
+training_tic = 0
+
+scheduler = StepLR(base_lr=args.lr, step_size=len(train_loader)*10)
 
 def main():
 
@@ -144,7 +162,7 @@ def main():
             args.start_epoch = checkpoint['epoch']
             best_acc1 = checkpoint['best_acc1']
             model.load_state_dict(checkpoint['state_dict'])
-            optimizer.load_state_dict(checkpoint['optimizer'])
+            # optimizer.load_state_dict(checkpoint['optimizer'])
             logger.info("=> loaded checkpoint '{}' (epoch {})"
                   .format(args.resume, checkpoint['epoch']))
         else:
@@ -166,7 +184,7 @@ def main():
         train_mae_record.append(train_mae)
         test_mae_record.append(test_mae)
 
-        lr_record.append(optimizer.param_groups[0]["lr"])
+        lr_record.append(nn_optimizer.param_groups[0]["lr"])
 
         # remember best prec@1 and save checkpoint
         is_best = test_acc1 > best_acc1
@@ -180,7 +198,8 @@ def main():
             'state_dict': model.state_dict(),
             'best_acc1': best_acc1,
             'best_acc5': best_acc5,
-            'optimizer' : optimizer.state_dict(),
+            'nn_optimizer' : nn_optimizer.state_dict(),
+            'tree_optimizer' : tree_optimizer.state_dict(),
             }, is_best, path=args.tmp)
 
         # continously save records in case of interupt
@@ -237,31 +256,36 @@ def main():
 
         savemat(join(args.tmp, 'record.mat'), record)
 
-    fig, axes = plt.subplots(2, 2, figsize=(16, 16))
-    axes[0, 0].plot(train_loss_all, color='r', linewidth=2)
-    axes[0, 0].grid(alpha=0.5, linestyle='dotted', linewidth=2, color='black')
-    axes[0, 0].set_xlabel("Iter")
-    axes[0, 0].set_ylabel("Train Loss")
+        fig, axes = plt.subplots(3, 2, figsize=(16, 16))
+        axes[0, 0].plot(train_loss_all, color='r', linewidth=2)
+        axes[0, 0].grid(alpha=0.5, linestyle='dotted', linewidth=2, color='black')
+        axes[0, 0].set_xlabel("Iter")
+        axes[0, 0].set_ylabel("Train Loss")
 
-    axes[0, 1].plot(test_loss_all, color='r', linewidth=2)
-    axes[0, 1].grid(alpha=0.5, linestyle='dotted', linewidth=2, color='black')
-    axes[0, 1].set_xlabel("Iter")
-    axes[0, 1].set_ylabel("Test Loss")
+        axes[0, 1].plot(test_loss_all, color='r', linewidth=2)
+        axes[0, 1].grid(alpha=0.5, linestyle='dotted', linewidth=2, color='black')
+        axes[0, 1].set_xlabel("Iter")
+        axes[0, 1].set_ylabel("Test Loss")
 
-    axes[1, 0].plot(train_mae_all, color='r', linewidth=2)
-    axes[1, 0].grid(alpha=0.5, linestyle='dotted', linewidth=2, color='black')
-    axes[1, 0].set_xlabel("Iter")
-    axes[1, 0].set_ylabel("Train MAE")
+        axes[1, 0].plot(train_mae_all, color='r', linewidth=2)
+        axes[1, 0].grid(alpha=0.5, linestyle='dotted', linewidth=2, color='black')
+        axes[1, 0].set_xlabel("Iter")
+        axes[1, 0].set_ylabel("Train MAE")
 
-    axes[1, 1].plot(test_mae_all, color='r', linewidth=2)
-    axes[1, 1].grid(alpha=0.5, linestyle='dotted', linewidth=2, color='black')
-    axes[1, 1].set_xlabel("Iter")
-    axes[1, 1].set_ylabel("Test MAE")
+        axes[1, 1].plot(test_mae_all, color='r', linewidth=2)
+        axes[1, 1].grid(alpha=0.5, linestyle='dotted', linewidth=2, color='black')
+        axes[1, 1].set_xlabel("Iter")
+        axes[1, 1].set_ylabel("Test MAE")
 
-    plt.tight_layout()
-    plt.savefig(join(args.tmp, 'iter-record.pdf'))
-    plt.savefig(join(args.tmp, 'iter-record.svg'))
-    plt.close(fig)
+        axes[2, 0].plot(lr_all, color='r', linewidth=2)
+        axes[2, 0].grid(alpha=0.5, linestyle='dotted', linewidth=2, color='black')
+        axes[2, 0].set_xlabel("Iter")
+        axes[2, 0].set_ylabel("LR")
+
+        plt.tight_layout()
+        plt.savefig(join(args.tmp, 'iter-record.pdf'))
+        plt.savefig(join(args.tmp, 'iter-record.svg'))
+        plt.close(fig)
 
     logger.info("Optimization done, ALL results saved to %s." % args.tmp)
 
@@ -294,25 +318,57 @@ def train(train_loader, epoch):
         top5.update(acc5.item(), data.size(0))
         mae.update(MAE(output, target), data.size(0))
 
+        
         train_loss_all.append(losses.val)
         train_mae_all.append(mae.val)
 
         # compute gradient and do SGD step
-        optimizer.zero_grad()
+        
+        nn_optimizer.zero_grad()
+        tree_optimizer.zero_grad()
 
         loss.backward()
 
         # adjust lr and update params
         lr = scheduler.step()
-        lr_all.append(lr)
-        for pg in optimizer.param_groups:
+        for pg in nn_optimizer.param_groups:
             pg["lr"] = lr
-        optimizer.step()
+        for pg in tree_optimizer.param_groups:
+            pg["lr"] = lr
+
+        global training_tic
+
+        training_phase = ""
+        if training_tic < len(train_loader):
+            for pg in nn_optimizer.param_groups:
+                pg["lr"] = pg["lr"] / 10
+            
+            for pg in tree_optimizer.param_groups:
+                pg["lr"] = pg["lr"] / 10
+
+            nn_optimizer.step()
+            tree_optimizer.step()
+            training_phase = "Updating both trees and NN"
+
+        elif len(train_loader) <= training_tic < len(train_loader)*2:
+            nn_optimizer.step()
+            training_phase = "Updating NN"
+
+        elif len(train_loader)*2 <= training_tic < len(train_loader)*3:
+            tree_optimizer.step()
+            training_phase = "Updating trees"
+
+        elif training_tic == len(train_loader)*3:
+            training_tic = 0
+
+        training_tic += 1
+
+        lr_all.append(nn_optimizer.param_groups[0]["lr"])
 
         # measure elapsed time
         batch_time.update(time.time() - end)
         end = time.time()
-        lr = optimizer.param_groups[0]["lr"]
+        lr = nn_optimizer.param_groups[0]["lr"]
 
         if i % args.print_freq == 0:
 
@@ -323,10 +379,10 @@ def train(train_loader, epoch):
                   'Prec@1 {top1.val:.3f} ({top1.avg:.3f})\t'
                   'Prec@5 {top5.val:.3f} ({top5.avg:.3f})\t'
                   'MAE {mae.val:.3f} ({mae.avg:.3f})\t'
-                  'LR: {lr:}'.format(
+                  'LR: {lr:} tic={tic:} ({phase:})'.format(
                    epoch, args.epochs, i, len(train_loader),
                    batch_time=batch_time, data_time=data_time, loss=losses, top1=top1, top5=top5,
-                   mae=mae, lr=lr))
+                   mae=mae, lr=lr, tic=training_tic, phase=training_phase))
 
     return losses.avg, top1.avg, top5.avg, mae.avg
 
