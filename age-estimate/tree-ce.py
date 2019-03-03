@@ -41,11 +41,11 @@ parser.add_argument('--imsize', type=int, default=224, help='Image Size')
 parser.add_argument('--num_classes', default=62-14+1, type=int, metavar='N', help='Number of classes')
 parser.add_argument('--bs', '--batch-size', default=256, type=int,
                     metavar='N', help='mini-batch size')
-parser.add_argument('--epochs', default=20, type=int, metavar='N',
+parser.add_argument('--epochs', default=40, type=int, metavar='N',
                     help='number of total epochs to run')
 parser.add_argument('--lr', '--learning-rate', default=0.01, type=float,
                     metavar='LR', help='initial learning rate')
-parser.add_argument('--wd', '--weight-decay', default=1e-4, type=float,
+parser.add_argument('--wd', '--weight-decay', default=0, type=float,
                     metavar='LR', help='weight decay')
 parser.add_argument('--resume', default=None, type=str, metavar='PATH',
                     help='path to latest checkpoint')
@@ -81,7 +81,7 @@ optimizer = torch.optim.SGD(
     momentum=0.9,
     weight_decay=args.wd
 )
-scheduler = lr_scheduler.StepLR(optimizer, step_size=30)
+scheduler = lr_scheduler.StepLR(optimizer, step_size=20)
 
 logger.info("Model details:")
 logger.info(model)

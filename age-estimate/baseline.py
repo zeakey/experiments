@@ -19,6 +19,7 @@ from vltools import image as vlimage
 from vltools.pytorch import save_checkpoint, AverageMeter, accuracy
 import vltools.pytorch as vlpytorch
 from vltools.tcm import CosAnnealingLR
+import resnet
 
 def MAE(prediction, target):
     assert prediction.squeeze().ndimension() == 2, prediction.squeeze().shape
@@ -33,6 +34,7 @@ parser.add_argument('--print-freq', default=20, type=int,
                     metavar='N', help='print frequency (default: 10)')
 # by default, arguments bellow will come from a config file
 parser.add_argument('--data', metavar='DIR', default=None, help='path to dataset')
+parser.add_argument('--imsize', type=int, default=224, help='Image Size')
 parser.add_argument('--num_classes', default=62-14+1, type=int, metavar='N', help='Number of classes')
 parser.add_argument('--bs', '--batch-size', default=256, type=int,
                     metavar='N', help='mini-batch size')
@@ -40,11 +42,11 @@ parser.add_argument('--epochs', default=20, type=int, metavar='N',
                     help='number of total epochs to run')
 parser.add_argument('--lr', '--learning-rate', default=0.01, type=float,
                     metavar='LR', help='initial learning rate')
-parser.add_argument('--wd', '--weight-decay', default=1e-4, type=float,
+parser.add_argument('--wd', '--weight-decay', default=0, type=float,
                     metavar='LR', help='weight decay')
 parser.add_argument('--resume', default=None, type=str, metavar='PATH',
                     help='path to latest checkpoint')
-parser.add_argument('--tmp', help='tmp folder', default="tmp")
+parser.add_argument('--tmp', help='tmp folder', default="tmp/baseline")
 parser.add_argument('--gpu', type=int, default=0)
 
 args = parser.parse_args()
@@ -58,6 +60,8 @@ torch.manual_seed(1)
 torch.cuda.manual_seed_all(1)
 torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
+
+# Switch between VGG16 and ResNet50
 if False:
     model = torchvision.models.vgg.vgg16(pretrained=False)
     for name, p in model.named_parameters():
@@ -74,10 +78,10 @@ if False:
         print(name, ": ", p.data.mean(), p.data.std())
     print("========================")
 else:
-    model = torchvision.models.resnet.resnet50(pretrained=True)
-    model.fc =  nn.Linear(512*4, args.num_classes)
+    model = resnet.resnet18(pretrained=True)
+    model.fc =  nn.Linear(512, args.num_classes)
 
-model.cuda()
+model = nn.DataParallel(model).cuda()
 
 optimizer = torch.optim.SGD(
     model.parameters(),
@@ -90,11 +94,7 @@ logger.info(model)
 logger.info("Optimizer details:")
 logger.info(optimizer)
 
-# scheduler = lr_scheduler.MultiStepLR(optimizer,
-#                       milestones=[4, 8, 12, 16],
-#                       gamma=0.5)
-
-# scheduler = lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
+scheduler = lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
 
 # loss function
 criterion = torch.nn.CrossEntropyLoss()
@@ -102,16 +102,16 @@ criterion = torch.nn.CrossEntropyLoss()
 normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                         std=[0.229, 0.224, 0.225])
 
-train_dataset = CACDDataset("CACD2000-aligned-112x112", "name_age_train.txt",
+train_dataset = CACDDataset("cacd-guoyilu", "train.txt",
             transforms.Compose([
-                transforms.Resize(224),
+                transforms.Resize((args.imsize, args.imsize)),
                 transforms.RandomHorizontalFlip(),
                 transforms.ToTensor(),
                 normalize,
             ]))
-test_dataset = CACDDataset("CACD2000-aligned-112x112", "name_age_test.txt",
+test_dataset = CACDDataset("cacd-guoyilu", "test.txt",
             transforms.Compose([
-                transforms.Resize(224),
+                transforms.Resize((args.imsize, args.imsize)),
                 transforms.ToTensor(),
                 normalize,
             ]))
