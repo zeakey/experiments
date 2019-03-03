@@ -49,7 +49,7 @@ parser.add_argument('--wd', '--weight-decay', default=1e-4, type=float,
                     metavar='LR', help='weight decay')
 parser.add_argument('--resume', default=None, type=str, metavar='PATH',
                     help='path to latest checkpoint')
-parser.add_argument('--tmp', help='tmp folder', default="tmp/tree-ce-alternative")
+parser.add_argument('--tmp', help='tmp folder', default="tmp/tree-ce")
 parser.add_argument('--gpu', type=int, default=0)
 
 args = parser.parse_args()
@@ -75,35 +75,18 @@ for name, p in model.named_parameters():
 model.cuda()
 model = nn.DataParallel(model).cuda()
 
-nn_params = []
-tree_params = []
-
-for name, p in model.named_parameters():
-    if "pi" in name:
-        tree_params.append(p)
-        logger.info("Tree parameter %s, shape=%s" % (name, p.data.shape))
-    else:
-        nn_params.append(p)
-        logger.info("NN parameter %s, shape=%s" % (name, p.data.shape))
-
-nn_optimizer = torch.optim.SGD(
-    nn_params,
+optimizer = torch.optim.SGD(
+    model.parameters(),
     lr=args.lr,
     momentum=0.9,
     weight_decay=args.wd
 )
-tree_optimizer = torch.optim.SGD(
-    tree_params,
-    lr=args.lr,
-    momentum=0.9,
-    weight_decay=args.wd
-)
+scheduler = lr_scheduler.StepLR(optimizer, step_size=30)
+
 logger.info("Model details:")
 logger.info(model)
-logger.info("NN Optimizer details:")
-logger.info(nn_optimizer)
-logger.info("Tree Optimizer details:")
-logger.info(tree_optimizer)
+logger.info("Optimizer details:")
+logger.info(optimizer)
 
 normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                         std=[0.229, 0.224, 0.225])
@@ -132,7 +115,6 @@ train_mae_all = []
 test_mae_all = []
 lr_all = []
 
-training_tic = 0
 
 scheduler = StepLR(base_lr=args.lr, step_size=len(train_loader)*30)
 
@@ -174,6 +156,7 @@ def main():
         # train and evaluate
         train_loss, train_acc1, train_acc5, train_mae = train(train_loader, epoch)
         test_loss, test_acc1, test_acc5, test_mae = validate(test_loader)
+        scheduler.step()
 
         # record stats
         train_loss_record.append(train_loss)
@@ -185,7 +168,7 @@ def main():
         train_mae_record.append(train_mae)
         test_mae_record.append(test_mae)
 
-        lr_record.append(nn_optimizer.param_groups[0]["lr"])
+        lr_record.append(optimizer.param_groups[0]["lr"])
 
         # remember best prec@1 and save checkpoint
         is_best = test_acc1 > best_acc1
@@ -199,8 +182,7 @@ def main():
             'state_dict': model.state_dict(),
             'best_acc1': best_acc1,
             'best_acc5': best_acc5,
-            'nn_optimizer' : nn_optimizer.state_dict(),
-            'tree_optimizer' : tree_optimizer.state_dict(),
+            'optimizer' : optimizer.state_dict(),
             }, is_best, path=args.tmp)
 
         # continously save records in case of interupt
@@ -324,51 +306,18 @@ def train(train_loader, epoch):
         train_mae_all.append(mae.val)
 
         # compute gradient and do SGD step
-        
-        nn_optimizer.zero_grad()
-        tree_optimizer.zero_grad()
-
+        optimizer.zero_grad()
         loss.backward()
 
-        # adjust lr and update params
-        lr = scheduler.step()
-        for pg in nn_optimizer.param_groups:
-            pg["lr"] = lr
-        for pg in tree_optimizer.param_groups:
-            pg["lr"] = lr
+        # update params
+        optimizer.step()
 
-        global training_tic
-
-        if training_tic < len(train_loader):
-            for pg in nn_optimizer.param_groups:
-                pg["lr"] = pg["lr"] / 10
-            
-            for pg in tree_optimizer.param_groups:
-                pg["lr"] = pg["lr"] / 10
-
-            nn_optimizer.step()
-            tree_optimizer.step()
-            training_phase = "Updating both trees and NN"
-
-        elif len(train_loader) <= training_tic < len(train_loader)*2:
-            nn_optimizer.step()
-            training_phase = "Updating NN"
-
-        elif len(train_loader)*2 <= training_tic < len(train_loader)*3:
-            tree_optimizer.step()
-            training_phase = "Updating trees"
-
-            if training_tic == len(train_loader)*3 - 1:
-              training_tic = -1
-
-        training_tic += 1
-
-        lr_all.append(nn_optimizer.param_groups[0]["lr"])
+        lr = optimizer.param_groups[0]["lr"]
+        lr_all.append(lr)
 
         # measure elapsed time
         batch_time.update(time.time() - end)
         end = time.time()
-        lr = nn_optimizer.param_groups[0]["lr"]
 
         if i % args.print_freq == 0:
 
@@ -379,10 +328,10 @@ def train(train_loader, epoch):
                   'Prec@1 {top1.val:.3f} ({top1.avg:.3f})\t'
                   'Prec@5 {top5.val:.3f} ({top5.avg:.3f})\t'
                   'MAE {mae.val:.3f} ({mae.avg:.3f})\t'
-                  'LR: {lr:} tic={tic:} ({phase:})'.format(
+                  'LR: {lr:}'.format(
                    epoch, args.epochs, i, len(train_loader),
                    batch_time=batch_time, data_time=data_time, loss=losses, top1=top1, top5=top5,
-                   mae=mae, lr=lr, tic=training_tic, phase=training_phase))
+                   mae=mae, lr=lr))
 
     return losses.avg, top1.avg, top5.avg, mae.avg
 
