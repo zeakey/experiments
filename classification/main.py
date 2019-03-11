@@ -10,7 +10,7 @@ from scipy.io import savemat
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-import os, sys, argparse, time, shutil, visdom
+import os, sys, argparse, time, shutil
 from os.path import join, split, isdir, isfile, dirname, abspath
 
 import vltools
@@ -22,7 +22,6 @@ import vltools.pytorch as vlpytorch
 import utils, models
 from models import *
 
-from torchvision.models import resnet
 
 parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
 # arguments from command line
@@ -74,14 +73,20 @@ torch.cuda.manual_seed_all(CONFIGS["MISC"]["RAND_SEED"])
 torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 
-if CONFIGS["VISDOM"]["VISDOM"] == True:
-    import visdom
-    vis = visdom.Visdom(port=CONFIGS["VISDOM"]["PORT"])
+
 
 THIS_DIR = abspath(dirname(__file__))
 os.makedirs(CONFIGS["MISC"]["TMP"], exist_ok=True)
 
 logger = Logger(join(CONFIGS["MISC"]["TMP"], "log.txt"))
+
+if CONFIGS["VISDOM"]["VISDOM"] == True:
+    try:
+        import visdom
+        vis = visdom.Visdom(port=CONFIGS["VISDOM"]["PORT"])
+    except:
+        logger.info("Cannot import visdom.")
+        CONFIGS["VISDOM"]["VISDOM"] = False
 
 # model and optimizer
 model = CONFIGS["MODEL"]["MODEL"] + "(num_classes=%d)" % (CONFIGS["DATA"]["NUM_CLASSES"])
@@ -189,6 +194,12 @@ def main():
             best_acc1 = checkpoint['best_acc1']
             model.load_state_dict(checkpoint['state_dict'])
             optimizer.load_state_dict(checkpoint['optimizer'])
+            # records
+            acc1_record = checkpoint["acc1_record"]
+            acc5_record = checkpoint["acc5_record"]
+            loss_record_record = checkpoint["loss_record"]
+            lr_record = checkpoint["lr_record"]
+
             logger.info("=> loaded checkpoint '{}' (epoch {})"
                   .format(args.resume, checkpoint['epoch']))
         else:
@@ -212,14 +223,15 @@ def main():
         is_best = acc1 > best_acc1
         best_acc1 = max(acc1_record)
         best_acc5 = max(acc5_record)
-        logger.info("Best acc1=%.3f" % best_acc1)
-        logger.info("Best acc5=%.3f" % best_acc5)
 
         # log parameters details
         logger.info("Epoch %d parameters details:" % epoch)
         for name, p in model.named_parameters():
             logger.info("%s, shape=%s, std=%f, mean=%f" % \
                     (name, str(p.shape), p.std().item(), p.mean().item()))
+
+        logger.info("Best acc1=%.5f" % best_acc1)
+        logger.info("Best acc5=%.5f" % best_acc5)
 
         # save checkpoint
         save_checkpoint({
@@ -228,6 +240,11 @@ def main():
             'best_acc1': best_acc1,
             'best_acc5': best_acc5,
             'optimizer' : optimizer.state_dict(),
+            # records
+            'acc1_record': acc1_record,
+            'acc5_record': acc5_record,
+            'lr_record': lr_record,
+            'loss_record': loss_record
             }, is_best, path=CONFIGS["MISC"]["TMP"])
 
         # We continously save records in case of interupt
@@ -256,7 +273,7 @@ def main():
         plt.savefig(join(CONFIGS["MISC"]["TMP"], 'record.pdf'))
         plt.close(fig)
 
-        if CONFIGS["VISDOM"]["VISDOM"]:
+        if CONFIGS["VISDOM"]["VISDOM"] and vis.check_connection():
 
             vis.line(np.array([acc1_record, acc5_record]).transpose(),
                      np.arange(len(acc1_record)).reshape(len(acc1_record), 1).repeat(2, axis=1),
@@ -403,7 +420,7 @@ def validate(val_loader):
                       'Prec@5 {top5.val:.3f} (avg={top5.avg:.3f})'.format(
                        i, len(val_loader), loss=losses, top1=top1, top5=top5))
 
-        logger.info(' * Prec@1 {top1.avg:.3f} Prec@5 {top5.avg:.3f}'
+        logger.info(' * Prec@1 {top1.avg:.5f} Prec@5 {top5.avg:.5f}'
               .format(top1=top1, top5=top5))
     return top1.avg, top5.avg
 
