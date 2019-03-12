@@ -75,8 +75,8 @@ class IRNN(nn.Module):
         
         super(IRNN, self).__init__()
 
-        self.horizontal = nn.RNN(input_size=input_size, hidden_size=input_size, bidirectional=True)
-        self.vertical = nn.RNN(input_size=input_size, hidden_size=input_size, bidirectional=True)
+        self.horizontal = nn.RNN(input_size=input_size, hidden_size=input_size//2, bidirectional=True)
+        self.vertical = nn.RNN(input_size=input_size, hidden_size=input_size//2, bidirectional=True)
 
     def forward(self, data):
         
@@ -87,10 +87,10 @@ class IRNN(nn.Module):
         output_h = self.horizontal(data_h)[0]
         output_v = self.vertical(data_v)[0]
 
-        print(output_h.shape)
+        output_h = output_h.view(W, N, H, C).permute(1, 3, 2, 0).contiguous()
+        output_v = output_h.view(H, N, W, C).permute(1, 3, 0, 2).contiguous()
 
-        output_h = output_h.view(W*2, N, H, C).permute(1, 3, 2, 0).contiguous()
-        output_v = output_h.view(H*2, N, W, C).permute(1, 3, 0, 2).contiguous()
+        print(output_h.shape)
 
 
 if __name__ == "__main__":
@@ -100,10 +100,10 @@ if __name__ == "__main__":
     irnn0 = RecurrentProp(128).cuda()
     irnn1 = IRNN(128).cuda()
 
-    # start = time.time()
-    # for i in range(10):
-        # irnn0(x)
-    # print(time.time() - start)
+    start = time.time()
+    for i in range(10):
+        irnn0(x)
+    print(time.time() - start)
 
     start = time.time()
     for i in range(10):
