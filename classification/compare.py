@@ -1,25 +1,34 @@
 from scipy.io import loadmat
+import matplotlib
+matplotlib.use("agg")
 import matplotlib.pyplot as plt
-mats = ["tmp/cifar100-resnet_se_cifar.resnet34/record.mat",
-        "tmp/cifar100-resnet_prelufc_cifar.resnet34/record.mat",
-        "tmp/cifar100-resnet_cifar.resnet34/record.mat"]
+import sys, os, copy
+from os.path import join, isfile, isdir
 
-legends = ["SE-ResNet", "PReLU-fc", "ResNet"]
+assert len(sys.argv) >= 3, "At least 2 targets (given %d)" % (len(sys.argv) - 1)
 
-fig, axes = plt.subplots(1, 2, figsize=(8, 4))
+mats = sys.argv[1:]
+
+for m in mats:
+    assert m.endswith("record.mat")
+
+legends = [m.replace("/record.mat", "") for m in mats]
+
+
+print(mats)
+
+plt.style.use('seaborn')
+fig, axes = plt.subplots(1, 3, figsize=(12, 4))
 for i in range(len(mats)):
-    mats[i] = loadmat(mats[i])
-    axes[0].plot(mats[i]["acc1"].squeeze())
-    axes[0].plot(mats[i]["acc5"].squeeze())
-    axes[0].set_title("Acc")
+    data = loadmat(mats[i])
+    axes[0].plot(data["acc1"].squeeze())
+    axes[0].set_title("Acc-1")
 
-    axes[1].plot(mats[i]["loss_record"].squeeze())
-    axes[1].set_title("Loss")
+    axes[1].plot(data["acc5"].squeeze())
+    axes[1].set_title("Acc-5")
 
+    axes[2].plot(data["loss_record"].squeeze())
+    axes[2].set_title("Loss")
+    axes[2].legend(legends, fontsize=6)
 
-for ax in axes:
-    ax.grid(alpha=0.5, linestyle='dotted', linewidth=2, color='black')
-    ax.legend(legends)
-
-# plt.legend(["SE-ResNet", "PReLU-fc", "ResNet"])
-plt.savefig("se-vs-prelufc-vs-resnet34.pdf")
+plt.savefig("compare.pdf")
