@@ -1,5 +1,6 @@
-import torch, torchvision
+import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.optim import lr_scheduler
 import torchvision
 import torchvision.transforms as transforms
@@ -20,11 +21,7 @@ from vltools.pytorch import save_checkpoint, AverageMeter, accuracy
 import vltools.pytorch as vlpytorch
 from vltools.tcm import CosAnnealingLR
 import resnet
-
-def MAE(prediction, target):
-    assert prediction.squeeze().ndimension() == 2, prediction.squeeze().shape
-    assert target.squeeze().ndimension() == 1
-    return torch.abs(target - torch.argmax(prediction, dim=1)).float().mean().item()
+from utils import MAE
 
 parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
 # arguments from command line
@@ -35,7 +32,7 @@ parser.add_argument('--print-freq', default=20, type=int,
 # by default, arguments bellow will come from a config file
 parser.add_argument('--data', metavar='DIR', default=None, help='path to dataset')
 parser.add_argument('--imsize', type=int, default=224, help='Image Size')
-parser.add_argument('--num_classes', default=62-14+1, type=int, metavar='N', help='Number of classes')
+parser.add_argument('--num_classes', default=100, type=int, metavar='N', help='Number of classes')
 parser.add_argument('--bs', '--batch-size', default=256, type=int,
                     metavar='N', help='mini-batch size')
 parser.add_argument('--epochs', default=20, type=int, metavar='N',
@@ -48,6 +45,7 @@ parser.add_argument('--resume', default=None, type=str, metavar='PATH',
                     help='path to latest checkpoint')
 parser.add_argument('--tmp', help='tmp folder', default="tmp/baseline")
 parser.add_argument('--gpu', type=int, default=0)
+parser.add_argument('--dex', action="store_true", default=False)
 
 args = parser.parse_args()
 os.makedirs(args.tmp, exist_ok=True)
@@ -62,32 +60,25 @@ torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 
 # Switch between VGG16 and ResNet50
-if False:
-    model = torchvision.models.vgg.vgg16(pretrained=False)
-    for name, p in model.named_parameters():
-        print(name, ": ", p.data.mean(), p.data.std())
-    print("========================")
-    model = torchvision.models.vgg.vgg16(pretrained=True)
-    for name, p in model.named_parameters():
-        print(name, ": ", p.data.mean(), p.data.std())
-    print("========================")
-    classifier = list(model.classifier.children())
-    classifier[-1] = nn.Linear(4096, args.num_classes)
-    model.classifier = nn.Sequential(*classifier)
-    for name, p in model.named_parameters():
-        print(name, ": ", p.data.mean(), p.data.std())
-    print("========================")
-else:
-    model = resnet.resnet18(pretrained=True)
-    model.fc =  nn.Linear(512, args.num_classes)
+# model = torchvision.models.vgg.vgg16(pretrained=False)
+# model = torchvision.models.vgg.vgg16(pretrained=True)
+# classifier = list(model.classifier.children())
+# classifier[-1] = nn.Linear(4096, args.num_classes)
+# model.classifier = nn.Sequential(*classifier)
+model = resnet.resnet34(pretrained=True)
+model.fc =  nn.Linear(512, args.num_classes)
 
 model = nn.DataParallel(model).cuda()
 
-optimizer = torch.optim.SGD(
+# optimizer = torch.optim.SGD(
+    # model.parameters(),
+    # lr=args.lr,
+    # momentum=0.9,
+    # weight_decay=args.wd
+# )
+optimizer = torch.optim.Adam(
     model.parameters(),
-    lr=args.lr,
-    momentum=0.9,
-    weight_decay=args.wd
+    lr = 0.1
 )
 logger.info("Model details:")
 logger.info(model)
@@ -102,14 +93,14 @@ criterion = torch.nn.CrossEntropyLoss()
 normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                         std=[0.229, 0.224, 0.225])
 
-train_dataset = CACDDataset("cacd-guoyilu", "train.txt",
+train_dataset = CACDDataset(args.data, "train.txt",
             transforms.Compose([
                 transforms.Resize((args.imsize, args.imsize)),
                 transforms.RandomHorizontalFlip(),
                 transforms.ToTensor(),
                 normalize,
             ]))
-test_dataset = CACDDataset("cacd-guoyilu", "test.txt",
+test_dataset = CACDDataset(args.data, "test.txt",
             transforms.Compose([
                 transforms.Resize((args.imsize, args.imsize)),
                 transforms.ToTensor(),
@@ -194,6 +185,7 @@ def main():
             'best_acc5': best_acc5,
             'optimizer' : optimizer.state_dict(),
             }, is_best, path=args.tmp)
+        logger.info("Model saved to %s" % args.tmp)
 
         # continously save records in case of interupt
         fig, axes = plt.subplots(1, 4, figsize=(16, 4))
@@ -304,7 +296,7 @@ def train(train_loader, epoch):
         losses.update(loss.item(), data.size(0))
         top1.update(acc1.item(), data.size(0))
         top5.update(acc5.item(), data.size(0))
-        mae.update(MAE(output, target), data.size(0))
+        mae.update(MAE(F.softmax(output, dim=1), target, args.dex), data.size(0))
 
         train_loss_all.append(losses.val)
         train_mae_all.append(mae.val)
@@ -367,7 +359,7 @@ def validate(test_loader):
             losses.update(loss.item(), data.size(0))
             top1.update(acc1.item(), data.size(0))
             top5.update(acc5.item(), data.size(0))
-            mae.update(MAE(output, target), data.size(0))
+            mae.update(MAE(F.softmax(output, dim=1), target, args.dex), data.size(0))
 
             test_loss_all.append(losses.val)
             test_mae_all.append(mae.val)
