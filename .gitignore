@@ -5,3 +5,7 @@ data/
 # Notebook
 .ipynb_checkpoints/
 notebooks/*.html
+
+*.jpg
+*.png
+*.pth
