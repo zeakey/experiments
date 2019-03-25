@@ -1,5 +1,6 @@
-import torch, torchvision
+import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.optim import lr_scheduler
 import torchvision
 import torchvision.transforms as transforms
@@ -21,11 +22,6 @@ import vltools.pytorch as vlpytorch
 from vltools.tcm import CosAnnealingLR
 import resnet
 
-def MAE(prediction, target):
-    assert prediction.squeeze().ndimension() == 2, prediction.squeeze().shape
-    assert target.squeeze().ndimension() == 1
-    return torch.abs(target - torch.argmax(prediction, dim=1)).float().mean().item()
-
 parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
 # arguments from command line
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
@@ -35,7 +31,7 @@ parser.add_argument('--print-freq', default=20, type=int,
 # by default, arguments bellow will come from a config file
 parser.add_argument('--data', metavar='DIR', default=None, help='path to dataset')
 parser.add_argument('--imsize', type=int, default=224, help='Image Size')
-parser.add_argument('--num_classes', default=62-14+1, type=int, metavar='N', help='Number of classes')
+parser.add_argument('--num_classes', default=100, type=int, metavar='N', help='Number of classes')
 parser.add_argument('--bs', '--batch-size', default=256, type=int,
                     metavar='N', help='mini-batch size')
 parser.add_argument('--epochs', default=20, type=int, metavar='N',
@@ -46,10 +42,13 @@ parser.add_argument('--wd', '--weight-decay', default=0, type=float,
                     metavar='LR', help='weight decay')
 parser.add_argument('--resume', default=None, type=str, metavar='PATH',
                     help='path to latest checkpoint')
-parser.add_argument('--tmp', help='tmp folder', default="tmp/baseline")
+parser.add_argument('--tmp', help='tmp folder', default="tmp/quantile")
 parser.add_argument('--gpu', type=int, default=0)
+parser.add_argument('--dex', action="store_true", default=False)
+parser.add_argument('--qstep', type=int, default=3, help="Quantization step")
 
 args = parser.parse_args()
+args.num_classes = 100 // args.qstep
 os.makedirs(args.tmp, exist_ok=True)
 logger = Logger(join(args.tmp, "log.txt"))
 
@@ -62,32 +61,25 @@ torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 
 # Switch between VGG16 and ResNet50
-if False:
-    model = torchvision.models.vgg.vgg16(pretrained=False)
-    for name, p in model.named_parameters():
-        print(name, ": ", p.data.mean(), p.data.std())
-    print("========================")
-    model = torchvision.models.vgg.vgg16(pretrained=True)
-    for name, p in model.named_parameters():
-        print(name, ": ", p.data.mean(), p.data.std())
-    print("========================")
-    classifier = list(model.classifier.children())
-    classifier[-1] = nn.Linear(4096, args.num_classes)
-    model.classifier = nn.Sequential(*classifier)
-    for name, p in model.named_parameters():
-        print(name, ": ", p.data.mean(), p.data.std())
-    print("========================")
-else:
-    model = resnet.resnet18(pretrained=True)
-    model.fc =  nn.Linear(512, args.num_classes)
+# model = torchvision.models.vgg.vgg16(pretrained=False)
+# model = torchvision.models.vgg.vgg16(pretrained=True)
+# classifier = list(model.classifier.children())
+# classifier[-1] = nn.Linear(4096, args.num_classes)
+# model.classifier = nn.Sequential(*classifier)
+model = resnet.resnet34(pretrained=True)
+model.fc =  nn.Linear(512, args.num_classes)
 
 model = nn.DataParallel(model).cuda()
 
-optimizer = torch.optim.SGD(
+# optimizer = torch.optim.SGD(
+    # model.parameters(),
+    # lr=args.lr,
+    # momentum=0.9,
+    # weight_decay=args.wd
+# )
+optimizer = torch.optim.Adam(
     model.parameters(),
-    lr=args.lr,
-    momentum=0.9,
-    weight_decay=args.wd
+    lr = 0.1
 )
 logger.info("Model details:")
 logger.info(model)
@@ -97,19 +89,18 @@ logger.info(optimizer)
 scheduler = lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
 
 # loss function
-criterion = torch.nn.CrossEntropyLoss()
 
 normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                         std=[0.229, 0.224, 0.225])
 
-train_dataset = CACDDataset("cacd-guoyilu", "train.txt",
+train_dataset = CACDDataset(args.data, "train.txt",
             transforms.Compose([
                 transforms.Resize((args.imsize, args.imsize)),
                 transforms.RandomHorizontalFlip(),
                 transforms.ToTensor(),
                 normalize,
             ]))
-test_dataset = CACDDataset("cacd-guoyilu", "test.txt",
+test_dataset = CACDDataset(args.data, "test.txt",
             transforms.Compose([
                 transforms.Resize((args.imsize, args.imsize)),
                 transforms.ToTensor(),
@@ -128,6 +119,27 @@ lr_all = []
 
 scheduler = CosAnnealingLR(len(train_loader)*args.epochs, lr_max=args.lr,
                            warmup_iters=len(train_loader)*2)
+
+
+def quantile_target(target, prediction):
+
+    target = target.squeeze()
+    N, K = prediction.shape
+    qtarget = torch.zeros(N, K, dtype=prediction.dtype, device=prediction.device)
+    assert qtarget.ndimension() == 2
+    assert target.ndimension() == 1
+
+    for i in range(N):
+        qtarget[i, 0:target[i]//args.qstep] = 1
+
+    return qtarget
+
+def MAE(prediction, target):
+    prediction = prediction >= 0.5
+    prediction = prediction.sum(dim=1).float()
+    prediction = prediction * args.qstep + float(args.qstep)/2
+    
+    return torch.abs(prediction - target.float()).mean()
 
 def main():
 
@@ -166,7 +178,7 @@ def main():
 
         # train and evaluate
         train_loss, train_acc1, train_acc5, train_mae = train(train_loader, epoch)
-        test_loss, test_acc1, test_acc5, test_mae = validate(test_loader)
+        test_loss, test_acc1, test_acc5, test_mae = validate(test_loader, epoch)
 
         # record stats
         train_loss_record.append(train_loss)
@@ -194,6 +206,7 @@ def main():
             'best_acc5': best_acc5,
             'optimizer' : optimizer.state_dict(),
             }, is_best, path=args.tmp)
+        logger.info("Model saved to %s" % args.tmp)
 
         # continously save records in case of interupt
         fig, axes = plt.subplots(1, 4, figsize=(16, 4))
@@ -296,8 +309,11 @@ def train(train_loader, epoch):
         target = target.cuda(device=args.gpu, non_blocking=True)
         data = data.cuda(device=args.gpu)
 
+
         output = model(data)
-        loss = criterion(output, target)
+        qtarget = quantile_target(target, output)
+        output = F.sigmoid(output)
+        loss = F.binary_cross_entropy(output, qtarget)
 
         # measure accuracy and record loss
         acc1, acc5 = accuracy(output, target, topk=(1, 5))
@@ -340,9 +356,26 @@ def train(train_loader, epoch):
                    batch_time=batch_time, data_time=data_time, loss=losses, top1=top1, top5=top5,
                    mae=mae, lr=lr))
 
+            t = qtarget.detach().cpu().numpy()[0:4, :].squeeze()
+            o = output.detach().cpu().numpy()[0:4, :].squeeze()
+            fig, axes = plt.subplots(1, 4, figsize=(16, 4))
+            for j in range(4):
+                axes[j].plot(t[j, :], color="r")
+                axes[j].plot(o[j, :], color="b")
+                axes[j].set_title("target=%d" % target[j])
+
+                axes[j].set_xticks(np.arange(0, args.num_classes))
+                axes[j].set_xticklabels([])
+
+                axes[j].set_yticks(np.arange(0, 1, 0.5))
+                axes[j].grid()
+
+            plt.savefig(join(args.tmp, "train-epoch%d-iter%d.pdf" % (epoch, i)))
+            plt.close(fig)
+
     return losses.avg, top1.avg, top5.avg, mae.avg
 
-def validate(test_loader):
+def validate(test_loader, epoch):
 
     batch_time = AverageMeter()
     losses = AverageMeter()
@@ -361,7 +394,9 @@ def validate(test_loader):
             data = data.cuda(device=args.gpu)
             # compute output
             output = model(data)
-            loss = criterion(output, target)
+            qtarget = quantile_target(target, output)
+            output = F.sigmoid(output)
+            loss = F.binary_cross_entropy(output, qtarget)
             # measure accuracy and record loss
             acc1, acc5 = accuracy(output, target, topk=(1, 5))
             losses.update(loss.item(), data.size(0))
@@ -375,13 +410,31 @@ def validate(test_loader):
             # measure elapsed time
             batch_time.update(time.time() - end)
             end = time.time()
-            if i % args.print_freq == 0:
+
+            if i % (args.print_freq // 2) == 0:
                 logger.info('Test: [{0}/{1}]\t'
                       'Test Loss {loss.val:.3f} (avg={loss.avg:.3f})\t'
                       'Prec@1 {top1.val:.3f} (avg={top1.avg:.3f})\t'
                       'Prec@5 {top5.val:.3f} (avg={top5.avg:.3f})\t'
                       'MAE {mae.val:.3f} (avg={mae.avg:.3f})'.format(
                        i, len(test_loader), loss=losses, top1=top1, top5=top5, mae=mae))
+
+                t = qtarget.detach().cpu().numpy()[0:4, :].squeeze()
+                o = output.detach().cpu().numpy()[0:4, :].squeeze()
+                fig, axes = plt.subplots(1, 4, figsize=(16, 4))
+                for j in range(4):
+                    axes[j].plot(t[j, :], color="r")
+                    axes[j].plot(o[j, :], color="b")
+                    axes[j].set_title("target=%d" % target[j])
+
+                    axes[j].set_xticks(np.arange(0, args.num_classes))
+                    axes[j].set_xticklabels([])
+
+                    axes[j].set_yticks(np.arange(0, 1, 0.5))
+                    axes[j].grid()
+
+                plt.savefig(join(args.tmp, "test-epoch%d-iter%d.pdf" % (epoch, i)))
+                plt.close(fig)
 
         logger.info(' * Prec@1 {top1.avg:.3f} Prec@5 {top5.avg:.3f} MAE {mae.avg:.3f}'
               .format(top1=top1, top5=top5, mae=mae))
