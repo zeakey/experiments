@@ -164,116 +164,8 @@ def main():
     for epoch in range(args.start_epoch, args.epochs):
 
         # train and evaluate
-        train_loss, train_acc1, train_acc5, train_mae = train(train_loader, epoch)
-        test_loss, test_acc1, test_acc5, test_mae = validate(test_loader)
-
-        # record stats
-        train_loss_record.append(train_loss)
-        test_loss_record.append(test_loss)
-
-        test_acc1_record.append(test_acc1)
-        test_acc5_record.append(test_acc5)
-
-        train_mae_record.append(train_mae)
-        test_mae_record.append(test_mae)
-
-        lr_record.append(optimizer.param_groups[0]["lr"])
-
-        # remember best prec@1 and save checkpoint
-        is_best = test_acc1 > best_acc1
-        best_acc1 = max(test_acc1_record)
-        best_acc5 = max(test_acc5_record)
-        logger.info("Best acc1=%.3f, best train-mae=%.3f, best test-mae=%.3f" % \
-                    (best_acc1, min(train_mae_record), min(test_mae_record)))
-
-        save_checkpoint({
-            'epoch': epoch + 1,
-            'state_dict': model.state_dict(),
-            'best_acc1': best_acc1,
-            'best_acc5': best_acc5,
-            'optimizer' : optimizer.state_dict(),
-            }, is_best, path=args.tmp)
-        logger.info("Model saved to %s" % args.tmp)
-
-        # continously save records in case of interupt
-        fig, axes = plt.subplots(1, 4, figsize=(16, 4))
-        axid = 0
-        axes[axid].plot(test_acc1_record, color='r', linewidth=2)
-        axes[axid].plot(test_acc5_record, color='g', linewidth=2)
-        axes[axid].legend(['Top1 Accuracy (Best%.3f)' % max(test_acc1_record),
-                           'Top5 Accuracy (Best%.3f)' % max(test_acc5_record)],
-                           loc="lower right")
-
-        axes[axid].grid(alpha=0.5, linestyle='dotted', linewidth=2, color='black')
-        axes[axid].set_xlabel("Epoch")
-        axes[axid].set_ylabel("Accuracy")
-
-        axid += 1
-        axes[axid].plot(train_mae_record, color='r', linewidth=2)
-        axes[axid].plot(test_mae_record, color='g', linewidth=2)
-        axes[axid].grid(alpha=0.5, linestyle='dotted', linewidth=2, color='black')
-        axes[axid].legend(["Train-MAE (Best=%.3f)" % min(train_mae_record),
-                           "Test-MAE (Best=%.3f)" % min(test_mae_record)], loc="upper right")
-        axes[axid].set_xlabel("Epoch")
-        axes[axid].set_ylabel("MAE")
-
-        axid += 1
-        axes[axid].plot(train_loss_record, color='r', linewidth=2)
-        axes[axid].plot(test_loss_record, color='g', linewidth=2)
-        axes[axid].grid(alpha=0.5, linestyle='dotted', linewidth=2, color='black')
-        axes[axid].legend(["Train Loss", "Test Loss"], loc="upper right")
-        axes[axid].set_xlabel("Epoch")
-        axes[axid].set_ylabel("Loss")
-
-        axid += 1
-        axes[axid].plot(lr_record, color="r", linewidth=2)
-        axes[axid].grid(alpha=0.5, linestyle='dotted', linewidth=2, color='black')
-        axes[axid].legend(["Learning Rate"], loc="upper right")
-        axes[axid].set_xlabel("Epoch")
-        axes[axid].set_ylabel("Learning Rate")
-
-        plt.tight_layout()
-        plt.savefig(join(args.tmp, 'epoch-record.pdf'))
-        plt.savefig(join(args.tmp, 'epoch-record.svg'))
-        plt.close(fig)
-
-        record = dict({'acc1': np.array(test_acc1_record),
-                       'acc5': np.array(test_acc5_record),
-                       'train_loss_record': np.array(train_loss_record),
-                       'test_loss_record': np.array(test_loss_record),
-                       'lr_record': np.array(lr_record),
-                       'train_loss_all': np.array(train_loss_all),
-                       'test_loss_all': np.array(test_loss_all),
-                       'train_mae_all': np.array(train_mae_all),
-                       'test_mae_all': np.array(test_mae_all)})
-
-        savemat(join(args.tmp, 'record.mat'), record)
-
-    fig, axes = plt.subplots(2, 2, figsize=(16, 16))
-    axes[0, 0].plot(train_loss_all, color='r', linewidth=2)
-    axes[0, 0].grid(alpha=0.5, linestyle='dotted', linewidth=2, color='black')
-    axes[0, 0].set_xlabel("Iter")
-    axes[0, 0].set_ylabel("Train Loss")
-
-    axes[0, 1].plot(test_loss_all, color='r', linewidth=2)
-    axes[0, 1].grid(alpha=0.5, linestyle='dotted', linewidth=2, color='black')
-    axes[0, 1].set_xlabel("Iter")
-    axes[0, 1].set_ylabel("Test Loss")
-
-    axes[1, 0].plot(train_mae_all, color='r', linewidth=2)
-    axes[1, 0].grid(alpha=0.5, linestyle='dotted', linewidth=2, color='black')
-    axes[1, 0].set_xlabel("Iter")
-    axes[1, 0].set_ylabel("Train MAE")
-
-    axes[1, 1].plot(test_mae_all, color='r', linewidth=2)
-    axes[1, 1].grid(alpha=0.5, linestyle='dotted', linewidth=2, color='black')
-    axes[1, 1].set_xlabel("Iter")
-    axes[1, 1].set_ylabel("Test MAE")
-
-    plt.tight_layout()
-    plt.savefig(join(args.tmp, 'iter-record.pdf'))
-    plt.savefig(join(args.tmp, 'iter-record.svg'))
-    plt.close(fig)
+        train_loss0, train_loss1, train_gender_acc, train_race_acc = train(train_loader, epoch)
+        test_loss0, test_loss1, test_gender_acc, test_race_acc = validate(test_loader)
 
     logger.info("Optimization done, ALL results saved to %s." % args.tmp)
 
@@ -349,47 +241,54 @@ def train(train_loader, epoch):
 def validate(test_loader):
 
     batch_time = AverageMeter()
-    losses = AverageMeter()
-    top1 = AverageMeter()
-    top5 = AverageMeter()
-    mae = AverageMeter()
+    loss0 = AverageMeter()
+    loss1 = AverageMeter()
+    race_acc = AverageMeter()
+    gender_acc = AverageMeter()
 
     # switch to evaluate mode
     model.eval()
 
     with torch.no_grad():
         end = time.time()
-        for i, (data, target) in enumerate(test_loader):
+        for i, (data, _, target_gender, target_race) in enumerate(test_loader):
             
-            target = target.cuda(device=args.gpu, non_blocking=True)
+            target_gender = target_gender.cuda(device=args.gpu, non_blocking=True)
+            target_race = target_race.cuda(device=args.gpu, non_blocking=True)
             data = data.cuda(device=args.gpu)
-            # compute output
-            output = model(data)
-            loss = criterion(output, target)
-            # measure accuracy and record loss
-            acc1, acc5 = accuracy(output, target, topk=(1, 5))
-            losses.update(loss.item(), data.size(0))
-            top1.update(acc1.item(), data.size(0))
-            top5.update(acc5.item(), data.size(0))
-            mae.update(MAE(F.softmax(output, dim=1), target, args.dex), data.size(0))
 
-            test_loss_all.append(losses.val)
-            test_mae_all.append(mae.val)
+            gender, race = model(data)
+            loss0_ = criterion(gender, target_gender)
+            loss1_ = criterion(race, target_race)
+
+            # measure accuracy and record loss
+            gender_acc_ = accuracy(gender, target_gender, topk=(1,))[0]
+            race_acc_ = accuracy(race, target_race, topk=(1,))[0]
+
+            loss0.update(loss0_.item(), data.size(0))
+            loss1.update(loss1_.item(), data.size(0))
+
+            gender_acc.update(gender_acc_.item(), data.size(0))
+            race_acc.update(race_acc_.item(), data.size(0))
 
             # measure elapsed time
             batch_time.update(time.time() - end)
             end = time.time()
             if i % args.print_freq == 0:
                 logger.info('Test: [{0}/{1}]\t'
-                      'Test Loss {loss.val:.3f} (avg={loss.avg:.3f})\t'
-                      'Prec@1 {top1.val:.3f} (avg={top1.avg:.3f})\t'
-                      'Prec@5 {top5.val:.3f} (avg={top5.avg:.3f})\t'
-                      'MAE {mae.val:.3f} (avg={mae.avg:.3f})'.format(
-                       i, len(test_loader), loss=losses, top1=top1, top5=top5, mae=mae))
+                      'Gender Loss {loss0.val:.3f} (avg={loss0.avg:.3f})\t'
+                      'Race Loss {loss1.val:.3f} (avg={loss1.avg:.3f})\t'
+                      'Gender Loss {loss0.val:.3f} ({loss0.avg:.3f})\t'
+                      'Race Loss {loss1.val:.3f} ({loss1.avg:.3f})\t'
+                      'Gender Acc {gender_acc.val:.3f} ({gender_acc.avg:.3f})\t'
+                      'Race Acc {race_acc.val:.3f} ({race_acc.avg:.3f})'.format(
+                       i, len(test_loader), loss0=loss0, loss1=loss1, gender_acc=gender_acc,
+                       race_acc=race_acc))
 
-        logger.info(' * Prec@1 {top1.avg:.3f} Prec@5 {top5.avg:.3f} MAE {mae.avg:.3f}'
-              .format(top1=top1, top5=top5, mae=mae))
-    return losses.avg, top1.avg, top5.avg, mae.avg
+        logger.info(' * Gender Acc {gender_acc.avg:.3f} Race Acc {race_acc.avg:.3f}'
+              .format(gender_acc=gender_acc, race_acc=race_acc))
+
+    return loss0.avg, loss1.avg, gender_acc.avg, race_acc.avg
 
 if __name__ == '__main__':
     main()
