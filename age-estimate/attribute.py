@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.optim import lr_scheduler
 import torchvision
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
@@ -37,7 +36,7 @@ parser.add_argument('--bs', '--batch-size', default=256, type=int,
                     metavar='N', help='mini-batch size')
 parser.add_argument('--epochs', default=20, type=int, metavar='N',
                     help='number of total epochs to run')
-parser.add_argument('--lr', '--learning-rate', default=0.01, type=float,
+parser.add_argument('--lr', '--learning-rate', default=0.1, type=float,
                     metavar='LR', help='initial learning rate')
 parser.add_argument('--wd', '--weight-decay', default=0, type=float,
                     metavar='LR', help='weight decay')
@@ -84,16 +83,16 @@ class Model(nn.Module):
 model = Model()
 model = nn.DataParallel(model).cuda()
 
-optimizer = torch.optim.Adam(
+optimizer = torch.optim.SGD(
     model.parameters(),
-    lr = 0.1
+    lr = args.lr,
+    weight_decay = args.wd,
+    momentum = 0.9
 )
 logger.info("Model details:")
 logger.info(model)
 logger.info("Optimizer details:")
 logger.info(optimizer)
-
-scheduler = lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
 
 # loss function
 criterion = torch.nn.CrossEntropyLoss()
@@ -103,14 +102,12 @@ normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
 
 train_dataset = UTKFaceDataset(args.data, split="train",
             transforms = transforms.Compose([
-                transforms.Resize((args.imsize, args.imsize)),
                 transforms.RandomHorizontalFlip(),
                 transforms.ToTensor(),
                 normalize,
             ]))
 test_dataset = UTKFaceDataset(args.data, split="test",
             transforms = transforms.Compose([
-                transforms.Resize((args.imsize, args.imsize)),
                 transforms.ToTensor(),
                 normalize,
             ]))
@@ -119,33 +116,18 @@ train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.bs, sh
                                            num_workers=8, pin_memory=True)
 test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=args.bs, shuffle=False,
                                            num_workers=8, pin_memory=True)
-train_loss_all = []
-test_loss_all = []
-train_mae_all = []
-test_mae_all = []
-lr_all = []
 
-scheduler = CosAnnealingLR(len(train_loader)*args.epochs, lr_max=args.lr,
-                           warmup_iters=len(train_loader)*2)
+train_loader_len = len(train_loader)
+scheduler = CosAnnealingLR(args.epochs*train_loader_len, lr_max=args.lr,
+            lr_min=0.0001, warmup_iters=5*train_loader_len)
 
 def main():
 
     logger.info(args)
 
     # records
-    best_acc1 = 0
-
-    test_acc1_record = []
-    test_acc5_record = []
-
-    train_mae_record = []
-    test_mae_record = []
-
-    train_loss_record = []
-    test_loss_record = []
-
-    lr_record = []
-
+    gender_acc_record = []
+    race_acc_record = []
     # optionally resume from a checkpoint
     if args.resume:
 
@@ -166,6 +148,19 @@ def main():
         # train and evaluate
         train_loss0, train_loss1, train_gender_acc, train_race_acc = train(train_loader, epoch)
         test_loss0, test_loss1, test_gender_acc, test_race_acc = validate(test_loader)
+
+        gender_acc_record.append(train_gender_acc)
+        race_acc_record.append(train_race_acc)
+
+        fig, axes = plt.subplots(1, 2, figsize=(8, 4))
+        axes[0].plot(gender_acc_record)
+        axes[0].set_title("Gender Acc")
+
+        axes[1].plot(race_acc_record)
+        axes[1].set_title("Race Acc")
+
+        plt.savefig(join(args.tmp, "record.pdf"))
+        plt.close(fig)
 
     logger.info("Optimization done, ALL results saved to %s." % args.tmp)
 
@@ -204,23 +199,18 @@ def train(train_loader, epoch):
         gender_acc.update(gender_acc_.item(), data.size(0))
         race_acc.update(race_acc_.item(), data.size(0))
 
-
         # compute gradient and do SGD step
         optimizer.zero_grad()
-
         (loss0_ + loss1_).backward()
-
-        # adjust lr and update params
-        lr = scheduler.step()
-        lr_all.append(lr)
-        for pg in optimizer.param_groups:
-            pg["lr"] = lr
         optimizer.step()
+
+        lr_ = scheduler.step()
+        for param_group in optimizer.param_groups:
+            param_group['lr'] = lr_
 
         # measure elapsed time
         batch_time.update(time.time() - end)
         end = time.time()
-        lr = optimizer.param_groups[0]["lr"]
 
         if i % args.print_freq == 0:
 
@@ -234,7 +224,7 @@ def train(train_loader, epoch):
                   'LR: {lr:}'.format(
                    epoch, args.epochs, i, len(train_loader),
                    batch_time=batch_time, data_time=data_time, loss0=loss0, loss1=loss1, 
-                   gender_acc=gender_acc, race_acc=race_acc, lr=lr))
+                   gender_acc=gender_acc, race_acc=race_acc, lr=lr_))
 
     return loss0.avg, loss1.avg, gender_acc.avg, race_acc.avg
 
