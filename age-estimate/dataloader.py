@@ -5,6 +5,9 @@ import os
 from os.path import join, split, splitext, abspath, dirname, isfile, isdir
 from scipy.io import loadmat
 from datetime import datetime, timedelta
+import random
+
+random.seed(7)
 
 from vltools.image import isimg
 
@@ -77,20 +80,35 @@ class IMDBDataset(torch.utils.data.Dataset):
 
 class UTKFaceDataset(torch.utils.data.Dataset):
 
-    def __init__(self, root, transforms=None):
+    def __init__(self, root, split="train", transforms=None):
 
         self.root = root
         self.transforms = transforms
         assert isdir(root)
         self.images = [i for i in os.listdir(self.root) if isimg(join(self.root, i))]
+        random.shuffle(self.images)
+
+        split_point = (len(self.images) // 10) * 9
+        if split == "train":
+            self.images = self.images[0:split_point]
+        elif split == "test":
+            self.images = self.images[split_point::]
+        else:
+            raise ValueError("Invalid split %s" % split)
+
         assert len(self.images) > 0
 
     def __getitem__(self, index):
 
         i = self.images[index]
         im = pil_loader(join(self.root, i))
-
-        age, gender, race, _ = splitext(i)[0].split("_")
+        try:
+            age, gender, race, _ = splitext(i)[0].split("_")
+            age = int(age)
+            gender = int(gender)
+            race = int(race)
+        except:
+            print(i)
 
         if self.transforms:
             im = self.transforms(im)
