@@ -1,9 +1,12 @@
 import torch
 import torch.utils.data as data
 from torchvision.datasets.folder import pil_loader
+import os
 from os.path import join, split, splitext, abspath, dirname, isfile, isdir
 from scipy.io import loadmat
 from datetime import datetime, timedelta
+
+from vltools.image import isimg
 
 class CACDDataset(torch.utils.data.Dataset):
 
@@ -71,6 +74,36 @@ class IMDBDataset(torch.utils.data.Dataset):
 
         return self.items.size
 
+
+class UTKFaceDataset(torch.utils.data.Dataset):
+
+    def __init__(self, root, transforms=None):
+
+        self.root = root
+        self.transforms = transforms
+        assert isdir(root)
+        self.images = [i for i in os.listdir(self.root) if isimg(join(self.root, i))]
+        assert len(self.images) > 0
+
+    def __getitem__(self, index):
+
+        i = self.images[index]
+        im = pil_loader(join(self.root, i))
+
+        age, gender, race, _ = splitext(i)[0].split("_")
+
+        if self.transforms:
+            im = self.transforms(im)
+
+        return im, age, gender, race
+
+    def __len__(self):
+        return len(self.images)
+
 if __name__ == "__main__":
 
-    imdb = IMDBDataset("/media/data2/dataset/IMDB-face/imdb_crop", "/media/data2/dataset/IMDB-face/imdb/imdb.mat")
+    # imdb = IMDBDataset("/media/data2/dataset/IMDB-face/imdb_crop", "/media/data2/dataset/IMDB-face/imdb/imdb.mat")
+    utk = UTKFaceDataset("/media/data2/dataset/UTKFace-aligned")
+    print(utk.__len__())
+    for im, age, gender, race in utk:
+        print(im, age, gender, race)
