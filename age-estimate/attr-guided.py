@@ -24,7 +24,8 @@ from vltools.tcm import CosAnnealingLR
 import resnet
 from utils import MAE
 
-from attribute import Model as AttributeModel
+from collections import OrderedDict
+from models.attribute_model import AttrModel
 
 parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
 # arguments from command line
@@ -40,7 +41,7 @@ parser.add_argument('--bs', '--batch-size', default=256, type=int,
                     metavar='N', help='mini-batch size')
 parser.add_argument('--epochs', default=20, type=int, metavar='N',
                     help='number of total epochs to run')
-parser.add_argument('--lr', '--learning-rate', default=0.01, type=float,
+parser.add_argument('--lr', '--learning-rate', default=0.1, type=float,
                     metavar='LR', help='initial learning rate')
 parser.add_argument('--wd', '--weight-decay', default=0, type=float,
                     metavar='LR', help='weight decay')
@@ -62,51 +63,52 @@ torch.cuda.manual_seed_all(1)
 torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 
-# Switch between VGG16 and ResNet50
-# model = torchvision.models.vgg.vgg16(pretrained=False)
-# model = torchvision.models.vgg.vgg16(pretrained=True)
-# classifier = list(model.classifier.children())
-# classifier[-1] = nn.Linear(4096, args.num_classes)
-# model.classifier = nn.Sequential(*classifier)
-
 class Model(nn.Module):
     
-    def __init__(self, extrac_feature=False):
+    def __init__(self):
         
         super(Model, self).__init__()
 
+        self.relu = nn.ReLU(inplace=True)
+
         m = resnet.resnet34(pretrained=True)
         self.base = nn.Sequential(*list(m.children())[:-1])
-        self.attribute_model = AttributeModel(extrac_feature=True)
-        
-        self.attribute_model.load_state_dict(torch.load("tmp/attribute/checkpoint.pth")["state_dict"])
 
-        self.fc = nn.Linear(1024, args.num_classes)
+        self.fc0a = nn.Linear(512, 256)
+        self.fc0b = nn.Linear(512, 256)
 
-    def forward(self, x):
-        
-        feature = torch.cat((self.base(x), self.attribute_model(x)), dim=1)
-        return self.fc(feature)
+        self.fc1 = nn.Linear(512, args.num_classes, bias=False)
+
+    def forward(self, x, attr_feat):
+        x = self.base(x).view(x.size(0), -1)
+        x = self.relu(self.fc0a(x))
+        attr_feat = self.relu(self.fc0b(attr_feat))
+
+        return self.fc1(torch.cat((x, attr_feat), dim=1))
 
 model = Model()
-model = nn.DataParallel(model).cuda()
+attr_model = AttrModel(extract_feature=True).cuda()
+state_dict = OrderedDict()
+old_dict = torch.load("tmp/attribute/checkpoint.pth")["state_dict"]
+for k, v in old_dict.items():
+    state_dict[k[7:]] = v
+attr_model.load_state_dict(state_dict)
+# Important!
+attr_model.eval()
 
-# optimizer = torch.optim.SGD(
-    # model.parameters(),
-    # lr=args.lr,
-    # momentum=0.9,
-    # weight_decay=args.wd
-# )
-optimizer = torch.optim.Adam(
-    model.parameters(),
-    lr = 0.1
-)
+model = nn.DataParallel(model).cuda()
 logger.info("Model details:")
 logger.info(model)
+
+optimizer = torch.optim.SGD(
+    model.parameters(),
+    lr=args.lr,
+    momentum=0.9,
+    weight_decay=args.wd
+)
+scheduler = lr_scheduler.MultiStepLR(optimizer, milestones=[12, 16], gamma=0.1)
 logger.info("Optimizer details:")
 logger.info(optimizer)
-
-scheduler = lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
 
 # loss function
 criterion = torch.nn.CrossEntropyLoss()
@@ -138,9 +140,6 @@ test_loss_all = []
 train_mae_all = []
 test_mae_all = []
 lr_all = []
-
-scheduler = CosAnnealingLR(len(train_loader)*args.epochs, lr_max=args.lr,
-                           warmup_iters=len(train_loader)*2)
 
 def main():
 
@@ -180,6 +179,9 @@ def main():
         # train and evaluate
         train_loss, train_acc1, train_acc5, train_mae = train(train_loader, epoch)
         test_loss, test_acc1, test_acc5, test_mae = validate(test_loader)
+
+        # adjust lr
+        scheduler.step()
 
         # record stats
         train_loss_record.append(train_loss)
@@ -310,7 +312,10 @@ def train(train_loader, epoch):
         target = target.cuda(device=args.gpu, non_blocking=True)
         data = data.cuda(device=args.gpu)
 
-        output = model(data)
+        with torch.no_grad():
+            attr_feat = attr_model(data)
+
+        output = model(data, attr_feat)
         loss = criterion(output, target)
 
         # measure accuracy and record loss
@@ -325,14 +330,7 @@ def train(train_loader, epoch):
 
         # compute gradient and do SGD step
         optimizer.zero_grad()
-
         loss.backward()
-
-        # adjust lr and update params
-        lr = scheduler.step()
-        lr_all.append(lr)
-        for pg in optimizer.param_groups:
-            pg["lr"] = lr
         optimizer.step()
 
         # measure elapsed time
@@ -374,7 +372,8 @@ def validate(test_loader):
             target = target.cuda(device=args.gpu, non_blocking=True)
             data = data.cuda(device=args.gpu)
             # compute output
-            output = model(data)
+            attr_feat = attr_model(data)
+            output = model(data, attr_feat)
             loss = criterion(output, target)
             # measure accuracy and record loss
             acc1, acc5 = accuracy(output, target, topk=(1, 5))
