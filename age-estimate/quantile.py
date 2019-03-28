@@ -419,10 +419,11 @@ def validate(test_loader, epoch):
                       'MAE {mae.val:.3f} (avg={mae.avg:.3f})'.format(
                        i, len(test_loader), loss=losses, top1=top1, top5=top5, mae=mae))
 
-                t = qtarget.detach().cpu().numpy()[0:4, :].squeeze()
-                o = output.detach().cpu().numpy()[0:4, :].squeeze()
-                fig, axes = plt.subplots(1, 4, figsize=(16, 4))
-                for j in range(4):
+                NSAMPLES = 5
+                t = qtarget.detach().cpu().numpy()[0:NSAMPLES, :].squeeze()
+                o = output.detach().cpu().numpy()[0:NSAMPLES, :].squeeze()
+                fig, axes = plt.subplots(1, NSAMPLES, figsize=(4*NSAMPLES, 4))
+                for j in range(NSAMPLES):
                     axes[j].plot(t[j, :], color="r")
                     axes[j].plot(o[j, :], color="b")
                     axes[j].set_title("target=%d" % target[j])
@@ -433,7 +434,8 @@ def validate(test_loader, epoch):
                     axes[j].set_yticks(np.arange(0, 1, 0.5))
                     axes[j].grid()
 
-                plt.savefig(join(args.tmp, "test-epoch%d-iter%d.pdf" % (epoch, i)))
+                os.makedirs(args.tmp, "predictions", exist_ok=True)
+                plt.savefig(join(args.tmp, "predictions", "test-epoch%d-iter%d.pdf" % (epoch, i)))
                 plt.close(fig)
 
         logger.info(' * Prec@1 {top1.avg:.3f} Prec@5 {top5.avg:.3f} MAE {mae.avg:.3f}'
