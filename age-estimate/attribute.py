@@ -22,6 +22,8 @@ from vltools.tcm import CosAnnealingLR
 import resnet
 from utils import MAE
 
+from models.attribute_model import AttrModel
+
 parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
 # arguments from command line
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
@@ -58,29 +60,7 @@ torch.cuda.manual_seed_all(1)
 torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 
-class Model(nn.Module):
-    
-    def __init__(self):
-        
-        super(Model, self).__init__()
-        m = resnet.resnet18(pretrained=True)
-        self.base = nn.Sequential(*list(m.children())[:-1])
-        
-        # gender
-        self.fc0 = nn.Linear(512, 2, bias=False)
-        # race
-        self.fc1 = nn.Linear(512, 5, bias=False)
-
-    def forward(self, x):
-        
-        feature = self.base(x)
-        feature = feature.view(feature.size(0), feature.size(1))
-        gender = self.fc0(feature)
-        race = self.fc1(feature)
-
-        return gender, race
-
-model = Model()
+model = AttrModel()
 model = nn.DataParallel(model).cuda()
 
 optimizer = torch.optim.SGD(
@@ -151,6 +131,12 @@ def main():
 
         gender_acc_record.append(train_gender_acc)
         race_acc_record.append(train_race_acc)
+
+        save_checkpoint({
+            'epoch': epoch + 1,
+            'state_dict': model.state_dict(),
+            'optimizer' : optimizer.state_dict(),
+            }, is_best=(gender_acc_record[-1]==max(gender_acc_record)), path=args.tmp)
 
         fig, axes = plt.subplots(1, 2, figsize=(8, 4))
         axes[0].plot(gender_acc_record)

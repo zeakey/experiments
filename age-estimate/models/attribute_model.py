@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-import torchvision
+import resnet
 
 class AttrModel(nn.Module):
     
@@ -9,7 +9,7 @@ class AttrModel(nn.Module):
         super(AttrModel, self).__init__()
         self.extract_feature = extract_feature
 
-        m = torchvision.models.resnet.resnet18(pretrained=True)
+        m = resnet.resnet18(pretrained=True)
         self.base = nn.Sequential(*list(m.children())[:-1])
         
         # gender
