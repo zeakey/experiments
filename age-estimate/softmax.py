@@ -37,7 +37,7 @@ parser.add_argument('--bs', '--batch-size', default=256, type=int,
                     metavar='N', help='mini-batch size')
 parser.add_argument('--epochs', default=20, type=int, metavar='N',
                     help='number of total epochs to run')
-parser.add_argument('--lr', '--learning-rate', default=0.01, type=float,
+parser.add_argument('--lr', '--learning-rate', default=0.1, type=float,
                     metavar='LR', help='initial learning rate')
 parser.add_argument('--wd', '--weight-decay', default=0, type=float,
                     metavar='LR', help='weight decay')
@@ -70,22 +70,17 @@ model.fc =  nn.Linear(512, args.num_classes)
 
 model = nn.DataParallel(model).cuda()
 
-# optimizer = torch.optim.SGD(
-    # model.parameters(),
-    # lr=args.lr,
-    # momentum=0.9,
-    # weight_decay=args.wd
-# )
-optimizer = torch.optim.Adam(
+optimizer = torch.optim.SGD(
     model.parameters(),
-    lr = 0.1
+    lr=args.lr,
+    momentum=0.9,
+    weight_decay=args.wd
 )
+scheduler = lr_scheduler.MultiStepLR(optimizer, milestones=[12, 16], gamma=0.1)
 logger.info("Model details:")
 logger.info(model)
 logger.info("Optimizer details:")
 logger.info(optimizer)
-
-scheduler = lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
 
 # loss function
 criterion = torch.nn.CrossEntropyLoss()
@@ -116,9 +111,6 @@ test_loss_all = []
 train_mae_all = []
 test_mae_all = []
 lr_all = []
-
-scheduler = CosAnnealingLR(len(train_loader)*args.epochs, lr_max=args.lr,
-                           warmup_iters=len(train_loader)*2)
 
 def main():
 
@@ -158,6 +150,9 @@ def main():
         # train and evaluate
         train_loss, train_acc1, train_acc5, train_mae = train(train_loader, epoch)
         test_loss, test_acc1, test_acc5, test_mae = validate(test_loader)
+
+        # adjust lr
+        scheduler.step()
 
         # record stats
         train_loss_record.append(train_loss)
@@ -303,14 +298,7 @@ def train(train_loader, epoch):
 
         # compute gradient and do SGD step
         optimizer.zero_grad()
-
         loss.backward()
-
-        # adjust lr and update params
-        lr = scheduler.step()
-        lr_all.append(lr)
-        for pg in optimizer.param_groups:
-            pg["lr"] = lr
         optimizer.step()
 
         # measure elapsed time
