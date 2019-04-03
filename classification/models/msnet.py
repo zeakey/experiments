@@ -1,6 +1,7 @@
 import torch.nn as nn
 import torch.utils.model_zoo as model_zoo
-from torchvision.models.resnet import __all__, model_urls, conv3x3, BasicBlock, Bottleneck
+from torchvision.models.resnet import __all__, model_urls, conv3x3
+from models.resnet import BasicBlock, Bottleneck
 
 def conv1x1(in_planes, out_planes, stride=1):
     """1x1 convolution"""
@@ -96,7 +97,7 @@ class MSNet(nn.Module):
             block_low
         )
         self.inplanes = planes*block.expansion
-        block_merge = self._make_layer(block, self.inplanes, planes, blocks=1, stride=2)
+        block_merge = self._make_layer(block, self.inplanes, planes, blocks=1, stride=1)
         self.layer1 = MSModule(block_high, block_low,
                                high_channels=self.inplanes//2,
                                low_channels=self.inplanes,
@@ -117,7 +118,6 @@ class MSNet(nn.Module):
                                low_channels=self.inplanes,
                                block_merge=block_merge, rescale=2)
 
-
         # layer3
         planes = 256
         block_high = self._make_layer(block, self.inplanes, planes//2, blocks=1, stride=1)
@@ -127,12 +127,13 @@ class MSNet(nn.Module):
             block_low
         )
         self.inplanes = planes*block.expansion
-        block_merge = self._make_layer(block, self.inplanes, planes, blocks=1, stride=1)
+        block_merge = self._make_layer(block, self.inplanes, planes, blocks=1, stride=2)
         self.layer3 = MSModule(block_high, block_low,
                                high_channels=self.inplanes//2,
                                low_channels=self.inplanes,
                                block_merge=block_merge, rescale=2)
-
+        
+        # layer4
         self.layer4 = self._make_layer(block, planes*block.expansion, 512, blocks=3, stride=2)
 
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
