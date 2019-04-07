@@ -1,97 +1,127 @@
 import torch.nn as nn
 import torch.utils.model_zoo as model_zoo
-from torchvision.models.resnet import __all__, model_urls, conv3x3, BasicBlock, Bottleneck
+from torchvision.models.resnet import __all__, model_urls, conv3x3
+from .resnet import BasicBlock, Bottleneck
 
 def conv1x1(in_planes, out_planes, stride=1):
     """1x1 convolution"""
     return nn.Conv2d(in_planes, out_planes, kernel_size=1, stride=stride, bias=False)
 
-def downsample2(in_channels):
-    return nn.Sequential(
-        nn.AvgPool2d(kernel_size=2, stride=2),
-        nn.Conv2d(in_channels=in_channels, out_channels=in_channels, kernel_size=1, bias=False),
-        nn.BatchNorm2d(in_channels),
-        nn.ReLU(inplace=True)
-    )
+def Downsample(in_channels, out_channels, stride):
+    if stride == 2:
+        return nn.Sequential(
+            nn.AvgPool2d(kernel_size=2, stride=2),
+            nn.Conv2d(in_channels=in_channels, out_channels=out_channels, kernel_size=1, bias=False),
+            nn.BatchNorm2d(out_channels)
+        )
+    elif stride == 1:
+        return nn.Sequential(
+            nn.Conv2d(in_channels=in_channels, out_channels=out_channels, kernel_size=1, bias=False),
+            nn.BatchNorm2d(out_channels)
+        )
+        
 
 class MSModule(nn.Module):
 
-    def __init__(self, block_high, block_low, block_merge=None, rescale=2):
+    def __init__(self, block_high, block_low, in_channels, high_channels, low_channels, stride=1, block_merge=None):
         """
         block_high: high resolution block, usually it contains more layers
         block_low: low resolution block, usually it contains less layers compared to block_high
+        in_channels: channels of input tensor
+        high_channels: output channels of high resolution block
+        low_channels: output channels of low resolution block
         block_merge: a block used to merge high-resolution features and low-resolution features
         """
         super(MSModule, self).__init__()
         self.block_high = block_high
         self.block_low = block_low
+        self.stride = stride
+
+        assert stride == 1 or stride == 2
+
+        if stride == 2:
+            self.downsample = Downsample(in_channels, in_channels, 2)
+        elif stride == 1:
+            self.downsample = None
+        else:
+            raise ValueError("stride=%d" % stride)
+
+        if high_channels != low_channels:
+            self.match = nn.Conv2d(high_channels, low_channels, kernel_size=1, bias=False)
+        else:
+            self.match = None
+
         self.block_merge = block_merge
 
-        self.rescale = rescale
-    
     def forward(self, x):
+
+        if self.downsample:
+            x = self.downsample(x)
         high = self.block_high(x)
         low = self.block_low(x)
 
-        if self.rescale != 1:
-            low = nn.functional.interpolate(low, scale_factor=self.rescale, mode="bilinear", align_corners=True)
+        if low.size(2) != high.size(2):
+            assert low.size(2) * 2 == high.size(2)
+            assert low.size(3) * 2 == high.size(3)
+            low = nn.functional.interpolate(low, scale_factor=2, mode="bilinear", align_corners=True)
+
+        if self.match:
+            high = self.match(high)
 
         if self.block_merge:
             merge = self.block_merge(high + low)
         else:
             merge = high + low
 
-        return merge
 
+        return merge
 
 class MSNet(nn.Module):
 
-    def __init__(self, block, num_classes=1000, zero_init_residual=False, cifar=False):
+    def __init__(self, block, num_classes=1000, zero_init_residual=False):
 
         super(MSNet, self).__init__()
-        
-        self.inplanes = 64
 
-        if cifar:
-            self.conv1 = nn.Sequential(
-                nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1, bias=False),
-                nn.BatchNorm2d(64),
-                nn.ReLU(inplace=True)
-            )
-        else:
-            self.conv1 = nn.Sequential(
-                nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3, bias=False),
-                nn.BatchNorm2d(64),
-                nn.ReLU(inplace=True),
-                nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
-            )
+        self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3,
+                               bias=False)
+        self.bn1 = nn.BatchNorm2d(64)
+        self.relu = nn.ReLU(inplace=True)
+        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
 
-        # layer1
-        planes = 64
-        block_high = self._make_layer(block, self.inplanes, planes, blocks=1, stride=1)
-        block_low = self._make_layer(block, self.inplanes, planes, blocks=2, stride=1)
-        block_merge = None
-        self.layer1 = MSModule(block_high, block_low, block_merge, rescale=1)
-        self.inplanes = planes*block.expansion
+        # layer1 output 28x28
+        block_low = self._make_layer(block, 64, 64, blocks=2)
+        block_low = nn.Sequential(
+                        Downsample(64, 64, 2),
+                        block_low)
+        block_high = self._make_layer(block, 64, 32, blocks=1)
+        block_merge = self._make_layer(block, 256, 64, stride=2, blocks=1)
+        self.layer1 = MSModule(block_high, block_low,
+                               in_channels=64, high_channels=128, low_channels=256,
+                               stride=1, block_merge=block_merge)
+        # layer2 output 14x14
+        block_low = self._make_layer(block, 256, 128, blocks=3)
+        block_low = nn.Sequential(
+                        Downsample(256, 256, 2),
+                        block_low)
+        block_high = self._make_layer(block, 256, 64, blocks=1)
+        block_merge = self._make_layer(block, 512, 128, stride=2, blocks=1)
+        self.layer2 = MSModule(block_high, block_low,
+                               in_channels=256, high_channels=256, low_channels=512,
+                               stride=1, block_merge=block_merge)
 
-        # layer2
-        planes = 128
-        block_high = self._make_layer(block, self.inplanes, planes, blocks=1, stride=2)
-        block_low = self._make_layer(block, self.inplanes, planes, blocks=3, stride=2)
-        block_merge = None
-        self.layer2 = MSModule(block_high, block_low, block_merge, rescale=1)
-        self.inplanes = planes*block.expansion
+        # layer3 output 7x7
+        block_low = self._make_layer(block, 512, 256, blocks=4)
+        block_low = nn.Sequential(
+                        Downsample(512, 512, 2),
+                        block_low)
+        block_high = self._make_layer(block, 512, 128, blocks=2)
+        block_merge = self._make_layer(block, 1024, 256, stride=2, blocks=1)
+        self.layer3 = MSModule(block_high, block_low,
+                               in_channels=512, high_channels=512, low_channels=1024,
+                               stride=1, block_merge=block_merge)
 
-        # layer3
-        planes = 256
-        block_high = self._make_layer(block, self.inplanes, planes, blocks=1, stride=2)
-        block_low = self._make_layer(block, self.inplanes, planes, blocks=5, stride=2)
-        block_merge = None
-        self.layer3 = MSModule(block_high, block_low, block_merge, rescale=1)
-        self.inplanes = planes*block.expansion
+        self.layer4 = self._make_layer(block, 1024, 512, blocks=3, stride=1)
 
-        self.layer4 = self._make_layer(block, planes*block.expansion, 512, blocks=3, stride=2)
-        
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
         self.fc = nn.Linear(512 * block.expansion, num_classes)
 
@@ -115,19 +145,7 @@ class MSNet(nn.Module):
     def _make_layer(self, block, inplanes, planes, blocks, stride=1):
         downsample = None
         if stride != 1 or inplanes != planes * block.expansion:
-            if stride == 1:
-                downsample = nn.Sequential(
-                    conv1x1(inplanes, planes * block.expansion, 1),
-                    nn.BatchNorm2d(planes * block.expansion),
-                )
-            elif stride == 2:
-                downsample = nn.Sequential(
-                    nn.AvgPool2d(kernel_size=2, stride=2),
-                    conv1x1(inplanes, planes * block.expansion, 1),
-                    nn.BatchNorm2d(planes * block.expansion),
-                )
-            else:
-                raise ValueError("stride=%d" % stride)
+            downsample = Downsample(inplanes, planes*block.expansion, stride=stride)
 
         layers = []
         layers.append(block(inplanes, planes, stride, downsample))
@@ -139,7 +157,9 @@ class MSNet(nn.Module):
 
     def forward(self, x):
         x = self.conv1(x)
-
+        x = self.bn1(x)
+        x = self.relu(x)
+        x = self.maxpool(x)
         x = self.layer1(x)
         x = self.layer2(x)
         x = self.layer3(x)
