@@ -1,3 +1,6 @@
+# this is the simplest implementation of MSNet
+# Just re-arrange residual blocks of ResNet50
+# There is NO extra layers except some upsample and downsample
 import torch.nn as nn
 import torch.utils.model_zoo as model_zoo
 from torchvision.models.resnet import __all__, model_urls, conv3x3
