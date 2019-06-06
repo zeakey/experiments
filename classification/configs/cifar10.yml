@@ -14,7 +14,8 @@ OPTIMIZER:
   GAMMA: 0.1
   MOMENTUM: 0.9
   WARMUP_EPOCHS: 0
-  MILE_STONES: [90, 135]
+  MILESTONES: [90, 135]
+  EPOCHS: 150
 
 CUDA:
   CUDA: True
@@ -27,5 +28,6 @@ VISDOM:
 
 MISC:
   LOGFREQ: 20
-  TMP: "tmp/resnet34-cifar10"
+  RAND_SEED: 7
+  TMP: ""
 
