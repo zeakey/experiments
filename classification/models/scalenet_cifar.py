@@ -191,8 +191,8 @@ class Bottleneck(nn.Module):
             #################################################
             # NOTE: adjust other parameters order accordingly
             #################################################
-            #self.conv2.bn.weight.data = self.conv2.bn.weight.data[order_new]
-            #self.conv2.bn.bias.data = self.conv2.bn.bias.data[order_new]
+            self.conv2.bn.weight.data = self.conv2.bn.weight.data[order_new]
+            self.conv2.bn.bias.data = self.conv2.bn.bias.data[order_new]
 
             self.conv3.weight.data = self.conv3.weight.data[:, order_new, :, :]
 
@@ -240,8 +240,8 @@ class Bottleneck(nn.Module):
             #################################################
             # NOTE: adjust other parameters order accordingly
             #################################################
-            #self.conv2.bn.weight.data = self.conv2.bn.weight.data[order_new]
-            #self.conv2.bn.bias.data = self.conv2.bn.bias.data[order_new]
+            self.conv2.bn.weight.data = self.conv2.bn.weight.data[order_new]
+            self.conv2.bn.bias.data = self.conv2.bn.bias.data[order_new]
 
             self.conv3.weight.data = self.conv3.weight.data[:, order_new, :, :]
 
