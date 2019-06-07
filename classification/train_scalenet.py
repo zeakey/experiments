@@ -57,7 +57,9 @@ parser.add_argument('--tmp', help='tmp folder', default=None)
 parser.add_argument('--benchmark', dest='benchmark', action="store_true")
 parser.add_argument('--gpu', default=None, type=int, metavar='N', help='GPU ID')
 
-parser.add_argument('--l1lambda', default=0.0005, type=float, help='lambda for L-1 penalty')
+parser.add_argument('--l1lambda', default=1e-5, type=float, help='lambda for L-1 penalty')
+parser.add_argument('--allocate-freq', default=20, type=int, help='allocate frequency')
+parser.add_argument('--debug', action="store_true")
 
 args = parser.parse_args()
 
@@ -91,6 +93,9 @@ if CONFIGS["CUDA"]["DATA_PARALLEL"]:
     model = nn.DataParallel(model).cuda()
 else:
     model = model.cuda(device=CONFIGS["CUDA"]["GPU_ID"])
+
+for name, p in model.named_parameters():
+    print(name, p.shape)
 
 optimizer = torch.optim.SGD(
     model.parameters(),
@@ -182,27 +187,22 @@ def main():
     start_time = time.time()
 
     for epoch in range(args.start_epoch, CONFIGS["OPTIMIZER"]["EPOCHS"]):
-        # temperature = model.allocate()
         # train and evaluate
-        if epoch == 0:
-            temperature = model.allocate()
-            for k, v in temperature.items():
-                tfboard_writer.add_scalar('temperature/'+k, v.mean().item(), epoch)
-                tfboard_writer.add_scalar('channels/'+k, v.numel(), epoch)
-
         loss, L1 = train(train_loader, epoch)
         acc1, acc5 = validate(val_loader, epoch)
         scheduler.step()
 
-        temperature = model.allocate()
-        for k, v in temperature.items():
-            tfboard_writer.add_scalar('temperature/'+k, v.mean().item(), epoch)
-            tfboard_writer.add_scalar('channels/'+k, v.numel(), epoch)
-
         tfboard_writer.add_scalar('train/loss_epoch', loss, epoch)
         tfboard_writer.add_scalar('train/BN-L1', L1, epoch)
+
         tfboard_writer.add_scalar('test/acc1_epoch', acc1, epoch)
         tfboard_writer.add_scalar('test/acc5_epoch', acc5, epoch)
+
+        if epoch > 0 and epoch % args.allocate_freq == 0:
+            temperature = model.allocate()
+            for k, v in temperature.items():
+                tfboard_writer.add_scalar('temperature/'+k, v.mean().item(), epoch)
+                tfboard_writer.add_scalar('channels/'+k, v.numel(), epoch)
 
         # remember best prec@1 and save checkpoint
         is_best = acc1 > best_acc1
@@ -211,10 +211,11 @@ def main():
             best_acc1 = acc1
 
         # log parameters details
-        logger.info("Epoch %d parameters details:" % epoch)
-        for name, p in model.named_parameters():
-            logger.info("%s, shape=%s, std=%f, mean=%f" % \
-                    (name, str(p.shape), p.std().item(), p.mean().item()))
+        if args.debug:
+            logger.info("Epoch %d parameters details:" % epoch)
+            for name, p in model.named_parameters():
+                logger.info("%s, shape=%s, std=%f, mean=%f" % \
+                        (name, str(p.shape), p.std().item(), p.mean().item()))
 
         logger.info("Best acc1=%.5f" % best_acc1)
 
@@ -311,6 +312,9 @@ def train(train_loader, epoch):
                    batch_time=batch_time, data_time=data_time, loss=losses, top1=top1, top5=top5,
                    lr=lr))
 
+        if i == 50 and args.debug:
+            break
+
     return losses.avg, l1penalty.avg
 
 def validate(val_loader, epoch):
@@ -350,6 +354,9 @@ def validate(val_loader, epoch):
                       'Prec@1 {top1.val:.3f} (avg={top1.avg:.3f})\t'
                       'Prec@5 {top5.val:.3f} (avg={top5.avg:.3f})'.format(
                        i, len(val_loader), loss=losses, top1=top1, top5=top5))
+
+            if i == 10 and args.debug:
+                break
 
         logger.info(' * Prec@1 {top1.avg:.5f} Prec@5 {top5.avg:.5f}'
               .format(top1=top1, top5=top5))
