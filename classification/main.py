@@ -22,6 +22,7 @@ import vltools.pytorch as vlpytorch
 import utils, models
 from models import *
 
+from tensorboardX import SummaryWriter
 
 parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
 # arguments from command line
@@ -73,20 +74,12 @@ torch.cuda.manual_seed_all(CONFIGS["MISC"]["RAND_SEED"])
 torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 
-
-
 THIS_DIR = abspath(dirname(__file__))
 os.makedirs(CONFIGS["MISC"]["TMP"], exist_ok=True)
 
-logger = Logger(join(CONFIGS["MISC"]["TMP"], "log.txt"))
+tfboard_writer = writer = SummaryWriter(log_dir=CONFIGS["MISC"]["TMP"])
 
-if CONFIGS["VISDOM"]["VISDOM"] == True:
-    try:
-        import visdom
-        vis = visdom.Visdom(port=CONFIGS["VISDOM"]["PORT"])
-    except:
-        logger.info("Cannot import visdom.")
-        CONFIGS["VISDOM"]["VISDOM"] = False
+logger = Logger(join(CONFIGS["MISC"]["TMP"], "log.txt"))
 
 # model and optimizer
 model = CONFIGS["MODEL"]["MODEL"] + "(num_classes=%d)" % (CONFIGS["DATA"]["NUM_CLASSES"])
@@ -117,15 +110,6 @@ for name, p in model.named_parameters():
 scheduler = lr_scheduler.MultiStepLR(optimizer,
                       milestones=CONFIGS["OPTIMIZER"]["MILESTONES"],
                       gamma=CONFIGS["OPTIMIZER"]["GAMMA"])
-
-if args.fp16:
-    from apex.fp16_utils import FP16_Optimizer, network_to_half
-    from apex import amp
-    torch.backends.cudnn.benchmark = True
-    optimizer = FP16_Optimizer(optimizer, static_loss_scale=1.0, dynamic_loss_scale=False)
-    model = network_to_half(model)
-    amp_handle = amp.init(enabled=args.fp16)
-    model = network_to_half(model)
 
 # loss function
 criterion = torch.nn.CrossEntropyLoss()
@@ -181,10 +165,6 @@ def main():
 
     # records
     best_acc1 = 0
-    acc1_record = []
-    acc5_record = []
-    loss_record = []
-    lr_record = []
     # optionally resume from a checkpoint
     if args.resume:
         if isfile(args.resume):
@@ -194,12 +174,6 @@ def main():
             best_acc1 = checkpoint['best_acc1']
             model.load_state_dict(checkpoint['state_dict'])
             optimizer.load_state_dict(checkpoint['optimizer'])
-            # records
-            acc1_record = checkpoint["acc1_record"]
-            acc5_record = checkpoint["acc5_record"]
-            loss_record_record = checkpoint["loss_record"]
-            lr_record = checkpoint["lr_record"]
-
             logger.info("=> loaded checkpoint '{}' (epoch {})"
                   .format(args.resume, checkpoint['epoch']))
         else:
@@ -210,19 +184,18 @@ def main():
 
         # train and evaluate
         loss = train(train_loader, epoch)
-        acc1, acc5 = validate(val_loader)
+        acc1, acc5 = validate(val_loader, epoch)
         scheduler.step()
 
-        # record stats
-        loss_record.append(loss)
-        acc1_record.append(acc1)
-        acc5_record.append(acc5)
-        lr_record.append(optimizer.param_groups[0]["lr"])
+        tfboard_writer.add_scalar('train/loss_epoch', loss, epoch)
+        tfboard_writer.add_scalar('test/acc1_epoch', acc1, epoch)
+        tfboard_writer.add_scalar('test/acc5_epoch', acc5, epoch)
 
         # remember best prec@1 and save checkpoint
         is_best = acc1 > best_acc1
-        best_acc1 = max(acc1_record)
-        best_acc5 = max(acc5_record)
+
+        if is_best:
+            best_acc1 = acc1
 
         # log parameters details
         logger.info("Epoch %d parameters details:" % epoch)
@@ -231,77 +204,14 @@ def main():
                     (name, str(p.shape), p.std().item(), p.mean().item()))
 
         logger.info("Best acc1=%.5f" % best_acc1)
-        logger.info("Best acc5=%.5f" % best_acc5)
 
         # save checkpoint
         save_checkpoint({
             'epoch': epoch + 1,
             'state_dict': model.state_dict(),
             'best_acc1': best_acc1,
-            'best_acc5': best_acc5,
-            'optimizer' : optimizer.state_dict(),
-            # records
-            'acc1_record': acc1_record,
-            'acc5_record': acc5_record,
-            'lr_record': lr_record,
-            'loss_record': loss_record
+            'optimizer' : optimizer.state_dict()
             }, is_best, path=CONFIGS["MISC"]["TMP"])
-
-        # We continously save records in case of interupt
-        fig, axes = plt.subplots(1, 3, figsize=(12, 4))
-        axes[0].plot(acc1_record, color='r', linewidth=2)
-        axes[0].plot(acc5_record, color='g', linewidth=2)
-        axes[0].legend(['Top1 Accuracy (Best%.3f)' % max(acc1_record), 'Top5 Accuracy (Best%.3f)' % max(acc5_record)],
-                       loc="lower right")
-        axes[0].grid(alpha=0.5, linestyle='dotted', linewidth=2, color='black')
-        axes[0].set_xlabel("Epoch")
-        axes[0].set_ylabel("Precision")
-
-        axes[1].plot(loss_record)
-        axes[1].grid(alpha=0.5, linestyle='dotted', linewidth=2, color='black')
-        axes[1].legend(["Loss"], loc="upper right")
-        axes[1].set_xlabel("Epoch")
-        axes[1].set_ylabel("Loss")
-
-        axes[2].plot(lr_record)
-        axes[2].grid(alpha=0.5, linestyle='dotted', linewidth=2, color='black')
-        axes[2].legend(["Learning Rate"], loc="upper right")
-        axes[2].set_xlabel("Epoch")
-        axes[2].set_ylabel("Learning Rate")
-
-        plt.tight_layout()
-        plt.savefig(join(CONFIGS["MISC"]["TMP"], 'record.pdf'))
-        plt.close(fig)
-
-        if CONFIGS["VISDOM"]["VISDOM"] and vis.check_connection():
-
-            vis.line(np.array([acc1_record, acc5_record]).transpose(),
-                     np.arange(len(acc1_record)).reshape(len(acc1_record), 1).repeat(2, axis=1),
-                     opts=dict({
-                         "legend": ["Top1 accuracy", "Top5 accuracy"],
-                         "title": "Accuracy",
-                         "ytickmin": 0,
-                         "ytickmax": 100,
-                    }), win=1)
-
-            vis.line(loss_record, np.arange(len(loss_record)),
-                     opts=dict({
-                         "title": "Loss",
-                         "ytickmin": 0,
-                         "fillarea": True,
-                    }), win=2)
-
-            vis.line(lr_record, np.arange(len(lr_record)),
-                     opts=dict({
-                         "title": "Learning rate",
-                         "ytickmax": CONFIGS["OPTIMIZER"]["LR"],
-                         "ytickmin": 0}),
-                         win=3)
-
-        record = dict({'acc1': np.array(acc1_record), 'acc5': np.array(acc5_record),
-                       'loss_record': np.array(loss_record), "lr_record": np.array(lr_record)})
-
-        savemat(join(CONFIGS["MISC"]["TMP"], 'record.mat'), record)
 
         t = time.time() - start_time           # total seconds from starting
         hours_per_epoch = (t // 3600) / (epoch + 1 - args.start_epoch)
@@ -358,18 +268,15 @@ def train(train_loader, epoch):
 
         # compute gradient and do SGD step
         optimizer.zero_grad()
-
-        if args.fp16:
-            optimizer.backward(loss)
-        else:
-            loss.backward()
-
+        loss.backward()
         optimizer.step()
 
         # measure elapsed time
         batch_time.update(time.time() - end)
         end = time.time()
         lr = optimizer.param_groups[0]["lr"]
+        tfboard_writer.add_scalar('train/loss_iter', loss.item(), epoch * len(train_loader)  + i)
+        tfboard_writer.add_scalar('train/lr', lr, epoch * len(train_loader)  + i)
         if i % CONFIGS["MISC"]["LOGFREQ"] == 0:
 
             logger.info('Epoch[{0}/{1}] Iter[{2}/{3}]\t'
@@ -385,7 +292,7 @@ def train(train_loader, epoch):
 
     return losses.avg
 
-def validate(val_loader):
+def validate(val_loader, epoch):
     batch_time = AverageMeter()
     losses = AverageMeter()
     top1 = AverageMeter()
@@ -405,6 +312,9 @@ def validate(val_loader):
             # compute output
             output = model(data)
             loss = criterion(output, target)
+
+            tfboard_writer.add_scalar('test/loss_iter', loss.item(), epoch * len(val_loader)  + i)
+            
             # measure accuracy and record loss
             acc1, acc5 = accuracy(output, target, topk=(1, 5))
             losses.update(loss.item(), data.size(0))
