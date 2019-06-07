@@ -266,18 +266,6 @@ def train(train_loader, epoch):
         output = model(data)
         loss = criterion(output, target)
 
-        # L-1 penalty
-        L1 = torch.zeros(1, device=loss.device)
-        for name, m in model.named_modules():
-            if isinstance(m, MSConv):
-                L1 += torch.abs(m.bn.weight).sum()
-        l1penalty.update(L1.item())
-
-        # # adjust learning rate
-        # lr = utils.get_lr_per_iter(epoch, i, len(train_loader),
-        #                            base_lr=CONFIGS["OPTIMIZER"]["LR"],
-        #                            warmup_epochs=CONFIGS["OPTIMIZER"]["WARMUP_EPOCHS"])
-        # utils.set_lr(optimizer, lr)
 
         # measure accuracy and record loss
         acc1, acc5 = accuracy(output, target, topk=(1, 5))
@@ -287,7 +275,18 @@ def train(train_loader, epoch):
 
         # compute gradient and do SGD step
         optimizer.zero_grad()
-        (loss + args.l1lambda * L1).backward()
+
+        if args.l1lambda > 0:
+            L1 = torch.zeros(1, device=loss.device)
+            for name, m in model.named_modules():
+                if isinstance(m, MSConv):
+                    L1 += torch.abs(m.bn.weight).sum()
+            l1penalty.update(L1.item())
+            (loss + args.l1lambda * L1).backward()
+        else:
+            l1penalty.update(0)
+            loss.backward()
+
         optimizer.step()
 
         # measure elapsed time
