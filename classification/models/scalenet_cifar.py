@@ -136,36 +136,52 @@ class Bottleneck(nn.Module):
         return out
 
     def allocate(self):
-        temperature = self.conv2.bn.weight.data.clone()
-        temperature0 = temperature[:self.conv2.ch0]
-        temperature1 = temperature[self.conv2.ch0::]
+        factors = self.conv2.bn.weight.data.clone()
+        factors0 = factors[:self.conv2.ch0]
+        factors1 = factors[self.conv2.ch0::]
 
-        temp_diff = (temperature0.mean() - temperature1.mean()).item()
+        factors0mask = (factors0 >= (factors0.max() * 0.01)).float()
+        factors1mask = (factors1 >= (factors1.max() * 0.01)).float()
 
-        ch0_old = self.conv2.ch0
-        ch1_old = self.conv2.ch1
+        # utilization ratio
+        uratio0 = factors0mask.mean()
+        uratio1 = factors1mask.mean()
 
-        ch_transfer = abs(int(temp_diff * self.conv2.capacity * self.conv2.ch1))
+        ch0 = self.conv2.ch0
+        ch1 = self.conv2.ch1
 
-        if ch_transfer == 0:
-            ch_transfer = 1
-
-        if temp_diff > 0:
+        if uratio0 >= uratio1:
             # conv0 is more important than conv1
             # conv1 -> conv0
+            
+            # a: number of useless neurons in conv1
+            # b: total number of neurons in conv1
+            # c: number of useless neurons in conv0
+            # d: total number of neurons in conv0
+            a = (1 - factors1mask).sum()
+            b = factors1mask.numel()
+            c = (1 - factors0mask).sum()
+            d = factors0mask.numel()
 
-            if self.conv2.ch1 - ch_transfer <= 0:
-                return temperature0, temperature1
+            # \frac{a-x}{b} = \frac{c+x}{d}
+            # x = \frac{ad - cb}{b + d}
+            ch_transfer = (a*d - c*b) / (b + d)
+            
+            if ch_transfer > c:
+                ch_transfer = c
+            if ch_transfer == 0:
+                ch_transfer = 1
+            ch_transfer = int(ch_transfer)
 
             conv_weight_old = torch.cat((self.conv2.conv0.weight.data,
                                          self.conv2.conv1.weight.data), dim=0)
 
-            v1, idx1_sorted = torch.sort(temperature1, descending=True)
-            idx1_sorted = (idx1_sorted + ch0_old).tolist()
+            v1, idx1_sorted = torch.sort(factors1, descending=True)
+            idx1_sorted = (idx1_sorted + ch0).tolist()
             idx1_removed = idx1_sorted[-ch_transfer::]
 
-            order0 = list(range(ch0_old))
-            order1 = list(range(ch0_old, ch0_old+ch1_old))
+            order0 = list(range(ch0))
+            order1 = list(range(ch0, ch0+ch1))
 
             for i in idx1_removed:
                 order0.append(i)
@@ -173,19 +189,20 @@ class Bottleneck(nn.Module):
 
             order_new = order0 + order1
 
-            conv_weight_new = conv_weight_old[order_new]
-
             _, inplanes, kernel_size, _ = self.conv2.conv0.weight.data.shape
+
+            conv_weight_new = conv_weight_old[order_new, :, :, :]
+
             padding = self.conv2.conv0.padding
             stride = self.conv2.conv0.stride
 
-            self.conv2.conv0 = nn.Conv2d(inplanes, ch0_old+ch_transfer, kernel_size=kernel_size,
+            self.conv2.conv0 = nn.Conv2d(inplanes, ch0+ch_transfer, kernel_size=kernel_size,
                               stride=stride, padding=padding, bias=False).cuda()
-            self.conv2.conv0.weight.data = conv_weight_new[:ch0_old+ch_transfer, :, :, :]
+            self.conv2.conv0.weight.data = conv_weight_new[:ch0+ch_transfer, :, :, :]
 
-            self.conv2.conv1 = nn.Conv2d(inplanes, ch1_old-ch_transfer, kernel_size=kernel_size,
+            self.conv2.conv1 = nn.Conv2d(inplanes, ch1-ch_transfer, kernel_size=kernel_size,
                               stride=stride, padding=padding, bias=False).cuda()
-            self.conv2.conv1.weight.data = conv_weight_new[ch0_old+ch_transfer::, :, :, :]
+            self.conv2.conv1.weight.data = conv_weight_new[ch0+ch_transfer::, :, :, :]
 
 
             #################################################
@@ -193,29 +210,45 @@ class Bottleneck(nn.Module):
             #################################################
             self.conv2.bn.weight.data = self.conv2.bn.weight.data[order_new]
             self.conv2.bn.bias.data = self.conv2.bn.bias.data[order_new]
-
             self.conv3.weight.data = self.conv3.weight.data[:, order_new, :, :]
+
+            # reinitiate parameters
+            torch.nn.init.kaiming_normal_(self.conv2.conv0.weight.data[-ch_transfer::, :, :, :], mode='fan_out', nonlinearity='relu')
+            self.conv2.bn.weight.data[ch0:ch0+ch_transfer] = 1
+            self.conv2.bn.bias.data[ch0:ch0+ch_transfer] = 0
+            self.conv3.weight.data[:, ch0:ch0+ch_transfer, :, :] = 0
 
             # update ch0 and ch1 at last
             self.conv2.ch0 = self.conv2.ch0 + ch_transfer
             self.conv2.ch1 = self.conv2.ch1 - ch_transfer
 
-        elif temp_diff < 0:
+        elif uratio0 < uratio1:
             # conv1 is more important than conv0
             # conv0 -> conv1
-
-            if self.conv2.ch0 - ch_transfer <= 0:
-                return temperature0, temperature1
+            
+            # \frac{a-x}{b} = \frac{c+x}{d}
+            # x = \frac{ad - cb}{b + d}
+            a = (1 - factors0mask).sum()
+            b = factors0mask.numel()
+            c = (1 - factors1mask).sum()
+            d = factors1mask.numel()
+            ch_transfer = (a*d - c*b) / (b + d)
+            
+            if ch_transfer > c:
+                ch_transfer = c
+            if ch_transfer == 0:
+                ch_transfer = 1
+            ch_transfer = int(ch_transfer)
 
             conv_weight_old = torch.cat((self.conv2.conv0.weight.data,
                                          self.conv2.conv1.weight.data), dim=0)
 
-            v0, idx0_sorted = torch.sort(temperature0, descending=True)
+            v0, idx0_sorted = torch.sort(factors0, descending=True)
             idx0_sorted = idx0_sorted.tolist()
             idx0_removed = idx0_sorted[-ch_transfer::]
 
-            order0 = list(range(ch0_old))
-            order1 = list(range(ch0_old, ch0_old+ch1_old))
+            order0 = list(range(ch0))
+            order1 = list(range(ch0, ch0+ch1))
 
             for i in idx0_removed:
                 order0.remove(i)
@@ -229,13 +262,13 @@ class Bottleneck(nn.Module):
             padding = self.conv2.conv0.padding
             stride = self.conv2.conv0.stride
 
-            self.conv2.conv0 = nn.Conv2d(inplanes, ch0_old-ch_transfer, kernel_size=kernel_size,
+            self.conv2.conv0 = nn.Conv2d(inplanes, ch0-ch_transfer, kernel_size=kernel_size,
                               stride=stride, padding=padding, bias=False).cuda()
-            self.conv2.conv0.weight.data = conv_weight_new[:ch0_old-ch_transfer, :, :, :]
+            self.conv2.conv0.weight.data = conv_weight_new[:ch0-ch_transfer, :, :, :]
 
-            self.conv2.conv1 = nn.Conv2d(inplanes, ch1_old+ch_transfer, kernel_size=kernel_size,
+            self.conv2.conv1 = nn.Conv2d(inplanes, ch1+ch_transfer, kernel_size=kernel_size,
                               stride=stride, padding=padding, bias=False).cuda()
-            self.conv2.conv1.weight.data = conv_weight_new[ch0_old-ch_transfer::, :, :, :]
+            self.conv2.conv1.weight.data = conv_weight_new[ch0-ch_transfer::, :, :, :]
 
             #################################################
             # NOTE: adjust other parameters order accordingly
@@ -245,11 +278,17 @@ class Bottleneck(nn.Module):
 
             self.conv3.weight.data = self.conv3.weight.data[:, order_new, :, :]
 
+            # reinitiate parameters
+            torch.nn.init.kaiming_normal_(self.conv2.conv0.weight.data[-ch_transfer::, :, :, :], mode='fan_out', nonlinearity='relu')
+            self.conv2.bn.weight.data[-ch_transfer::] = 1
+            self.conv2.bn.bias.data[-ch_transfer::] = 0
+            self.conv3.weight.data[:, -ch_transfer::, :, :] = 0
+
             # update ch0 and ch1 at last
             self.conv2.ch0 = self.conv2.ch0 - ch_transfer
             self.conv2.ch1 = self.conv2.ch1 + ch_transfer
 
-        return temperature0, temperature1
+        return factors0, factors1
 
 
 class ResNet(nn.Module):
@@ -272,8 +311,8 @@ class ResNet(nn.Module):
             if isinstance(m, nn.Conv2d):
                 nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
             elif isinstance(m, nn.BatchNorm2d):
-                nn.init.constant_(m.weight, 1)
-                # nn.init.uniform_(m.weight, a=0, b=1)
+                # nn.init.constant_(m.weight, 1)
+                nn.init.uniform_(m.weight, a=0, b=1)
                 nn.init.constant_(m.bias, 0)
 
         # Zero-initialize the last BN in each residual branch,
@@ -319,21 +358,13 @@ class ResNet(nn.Module):
         return x
     
     def allocate(self):
-        temperature = {}
-        # named_modules = list(self.named_modules())
-        # for i in range(len(named_modules)):
-        #     name, m = named_modules[i]
-        #     if isinstance(m, MSConv):
-        #         temperature0, temperature1 = m.allocate(named_modules[i+1][1])
-        #         temperature[name+'-0'] = temperature0
-        #         temperature[name+'-1'] = temperature1
-
+        factors = {}
         for name, m in self.named_modules():
             if isinstance(m, Bottleneck):
-                temperature0, temperature1 = m.allocate()
-                temperature[name+'-0'] = temperature0
-                temperature[name+'-1'] = temperature1
-        return temperature
+                factors0, factors1 = m.allocate()
+                factors[name+'-0'] = factors0
+                factors[name+'-1'] = factors1
+        return factors
                 
 
 
