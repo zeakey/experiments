@@ -152,10 +152,8 @@ class Bottleneck(nn.Module):
         ch0 = self.conv2.ch0
         ch1 = self.conv2.ch1
 
-        if uratio0 >= uratio1:
-            # conv0 is more important than conv1
-            # conv1 -> conv0
-            
+        ch_transfer = -1
+        if uratio0 > uratio1:
             # a: number of useless neurons in conv1
             # b: total number of neurons in conv1
             # c: number of useless neurons in conv0
@@ -168,12 +166,28 @@ class Bottleneck(nn.Module):
             # \frac{a-x}{b} = \frac{c+x}{d}
             # x = \frac{ad - cb}{b + d}
             ch_transfer = (a*d - c*b) / (b + d)
+
+            if ch_transfer > c:
+                ch_transfer = c
+
+        elif uratio1 > uratio0:
+            a = (1 - factors0mask).sum()
+            b = factors0mask.numel()
+            c = (1 - factors1mask).sum()
+            d = factors1mask.numel()
+            ch_transfer = (a*d - c*b) / (b + d)
             
             if ch_transfer > c:
                 ch_transfer = c
-            if ch_transfer == 0:
-                ch_transfer = 1
-            ch_transfer = int(ch_transfer)
+
+        ch_transfer = int(ch_transfer)
+
+        if ch_transfer <= 0:
+            return factors0, factors1
+
+        if uratio0 >= uratio1:
+            # conv0 is more important than conv1
+            # conv1 -> conv0
 
             conv_weight_old = torch.cat((self.conv2.conv0.weight.data,
                                          self.conv2.conv1.weight.data), dim=0)
@@ -225,22 +239,6 @@ class Bottleneck(nn.Module):
             self.conv2.ch1 = self.conv2.ch1 - ch_transfer
 
         elif uratio0 < uratio1:
-            # conv1 is more important than conv0
-            # conv0 -> conv1
-            
-            # \frac{a-x}{b} = \frac{c+x}{d}
-            # x = \frac{ad - cb}{b + d}
-            a = (1 - factors0mask).sum()
-            b = factors0mask.numel()
-            c = (1 - factors1mask).sum()
-            d = factors1mask.numel()
-            ch_transfer = (a*d - c*b) / (b + d)
-            
-            if ch_transfer > c:
-                ch_transfer = c
-            if ch_transfer == 0:
-                ch_transfer = 1
-            ch_transfer = int(ch_transfer)
 
             conv_weight_old = torch.cat((self.conv2.conv0.weight.data,
                                          self.conv2.conv1.weight.data), dim=0)
