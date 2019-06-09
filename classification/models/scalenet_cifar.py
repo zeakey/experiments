@@ -140,6 +140,8 @@ class Bottleneck(nn.Module):
         factors0 = factors[:self.conv2.ch0]
         factors1 = factors[self.conv2.ch0::]
 
+        # a channel is useful if its factor value is greater
+        # than (or equal) 0.01 * maximal-factor
         factors0mask = (factors0 >= (factors0.max() * 0.01)).float()
         factors1mask = (factors1 >= (factors1.max() * 0.01)).float()
 
@@ -287,6 +289,10 @@ class Bottleneck(nn.Module):
             # update ch0 and ch1 at last
             self.conv2.ch0 = self.conv2.ch0 - ch_transfer
             self.conv2.ch1 = self.conv2.ch1 + ch_transfer
+
+        factors = self.conv2.bn.weight.data.clone()
+        factors0 = factors[:self.conv2.ch0]
+        factors1 = factors[self.conv2.ch0::]
 
         return factors0, factors1
 
