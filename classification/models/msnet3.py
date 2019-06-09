@@ -89,13 +89,13 @@ class MSNet(nn.Module):
         # layer0
         block_low = nn.Sequential(
                 nn.Conv2d(64, 32, kernel_size=3, stride=1, padding=1, bias=False),
-                nn.ReLU(inplace=True)
+                nn.ReLU(inplace=True),
                 nn.BatchNorm2d(32),
                 nn.Conv2d(32, 32, kernel_size=3, stride=2, padding=1, bias=False),
-                nn.ReLU(inplace=True)
+                nn.ReLU(inplace=True),
                 nn.BatchNorm2d(32),
                 nn.Conv2d(32, 64, kernel_size=1, stride=1, bias=False),
-                nn.ReLU(inplace=True)
+                nn.ReLU(inplace=True),
                 nn.BatchNorm2d(64),
         )
         block_high = nn.Conv2d(64, 64, kernel_size=3, stride=1, padding=1, bias=False)
