@@ -281,7 +281,7 @@ class Bottleneck(nn.Module):
             self.conv3.weight.data = self.conv3.weight.data[:, order_new, :, :]
 
             # reinitiate parameters
-            torch.nn.init.kaiming_normal_(self.conv2.conv0.weight.data[-ch_transfer::, :, :, :], mode='fan_out', nonlinearity='relu')
+            torch.nn.init.kaiming_normal_(self.conv2.conv1.weight.data[-ch_transfer::, :, :, :], mode='fan_out', nonlinearity='relu')
             self.conv2.bn.weight.data[-ch_transfer::] = 1
             self.conv2.bn.bias.data[-ch_transfer::] = 0
             self.conv3.weight.data[:, -ch_transfer::, :, :] = 0
