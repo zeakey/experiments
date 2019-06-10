@@ -83,7 +83,7 @@ tfboard_writer = writer = SummaryWriter(log_dir=CONFIGS["MISC"]["TMP"])
 logger = Logger(join(CONFIGS["MISC"]["TMP"], "log.txt"))
 
 # model and optimizer
-model = CONFIGS["MODEL"]["MODEL"] + "(num_classes=%d)" % (CONFIGS["DATA"]["NUM_CLASSES"])
+model = CONFIGS["MODEL"]["MODEL"] + "(num_classes=%d, logger=logger)" % (CONFIGS["DATA"]["NUM_CLASSES"])
 logger.info("Model: %s" % model)
 model = eval(model)
 
@@ -187,6 +187,14 @@ def main():
     start_time = time.time()
 
     for epoch in range(args.start_epoch, CONFIGS["OPTIMIZER"]["EPOCHS"]):
+
+        if args.debug:
+            temperature = model.allocate()
+            for k, v in temperature.items():
+                uratio = (v >= (v.max() * 0.01)).float().mean()
+                tfboard_writer.add_scalar('temperature/'+k, uratio.item(), epoch-1)
+                tfboard_writer.add_scalar('channels/'+k, v.numel(), epoch-1)
+
         # train and evaluate
         loss, L1 = train(train_loader, epoch)
         acc1, acc5 = validate(val_loader, epoch)
@@ -201,7 +209,8 @@ def main():
         if epoch > 0 and epoch % args.allocate_freq == 0:
             temperature = model.allocate()
             for k, v in temperature.items():
-                tfboard_writer.add_scalar('temperature/'+k, v.mean().item(), epoch)
+                uratio = (v >= (v.max() * 0.01)).float().mean()
+                tfboard_writer.add_scalar('temperature/'+k, uratio.item(), epoch)
                 tfboard_writer.add_scalar('channels/'+k, v.numel(), epoch)
 
         # remember best prec@1 and save checkpoint
@@ -265,7 +274,12 @@ def train(train_loader, epoch):
 
         output = model(data)
         loss = criterion(output, target)
-
+        # L1 loss
+        L1 = torch.zeros(1, device=loss.device)
+        for name, m in model.named_modules():
+            if isinstance(m, MSConv):
+                L1 += torch.abs(m.bn.weight).sum()
+        l1penalty.update(L1.item())
 
         # measure accuracy and record loss
         acc1, acc5 = accuracy(output, target, topk=(1, 5))
@@ -275,16 +289,9 @@ def train(train_loader, epoch):
 
         # compute gradient and do SGD step
         optimizer.zero_grad()
-
         if args.l1lambda > 0:
-            L1 = torch.zeros(1, device=loss.device)
-            for name, m in model.named_modules():
-                if isinstance(m, MSConv):
-                    L1 += torch.abs(m.bn.weight).sum()
-            l1penalty.update(L1.item())
             (loss + args.l1lambda * L1).backward()
         else:
-            l1penalty.update(0)
             loss.backward()
 
         optimizer.step()

@@ -135,7 +135,7 @@ class Bottleneck(nn.Module):
 
         return out
 
-    def allocate(self):
+    def allocate(self, logger=None):
         factors = self.conv2.bn.weight.data.clone()
         factors0 = factors[:self.conv2.ch0]
         factors1 = factors[self.conv2.ch0::]
@@ -152,6 +152,20 @@ class Bottleneck(nn.Module):
         ch0 = self.conv2.ch0
         ch1 = self.conv2.ch1
 
+        if logger:
+            logger.info("ch0: %d, ch1: %d" % (self.conv2.ch0, self.conv2.ch1))
+            logger.info("conv0 useful: %d, useless: %d" % (
+                (factors0 >= (factors0.max() * 0.01)).sum(),
+                (factors0 < (factors0.max() * 0.01)).sum()
+                ))
+            logger.info("conv1 useful: %d, useless: %d" % (
+                (factors1 >= (factors0.max() * 0.01)).sum(),
+                (factors1  < (factors1.max() * 0.01)).sum()
+                ))
+            logger.info("factors0: %s" % str(factors0.tolist()))
+            logger.info("factors1: %s" % str(factors1.tolist()))
+            logger.info("uratio0: %f, uratio1: %f" % (uratio0, uratio1))
+
         ch_transfer = -1
         if uratio0 > uratio1:
             # a: number of useless neurons in conv1
@@ -167,8 +181,8 @@ class Bottleneck(nn.Module):
             # x = \frac{ad - cb}{b + d}
             ch_transfer = (a*d - c*b) / (b + d)
 
-            if ch_transfer > c:
-                ch_transfer = c
+            if ch_transfer > a:
+                ch_transfer = a
 
         elif uratio1 > uratio0:
             a = (1 - factors0mask).sum()
@@ -177,10 +191,13 @@ class Bottleneck(nn.Module):
             d = factors1mask.numel()
             ch_transfer = (a*d - c*b) / (b + d)
             
-            if ch_transfer > c:
-                ch_transfer = c
+            if ch_transfer > a:
+                ch_transfer = a
 
         ch_transfer = int(ch_transfer)
+
+        if logger:
+            logger.info("ch_transfer: %d" % ch_transfer)
 
         if ch_transfer <= 0:
             return factors0, factors1
@@ -288,16 +305,36 @@ class Bottleneck(nn.Module):
             self.conv2.ch0 = self.conv2.ch0 - ch_transfer
             self.conv2.ch1 = self.conv2.ch1 + ch_transfer
 
+        # rescale bn factors to 1
+        factors = self.conv2.bn.weight.data.clone()
+        r = torch.ones_like(factors)
+        sign = torch.sign(factors)
+        idx = (torch.abs(factors) <= 1) * (torch.abs(factors) > 0)
+        r[idx] = factors[idx]
+        r = r.view(1, r.numel(), 1, 1)
+        r = r.expand_as(self.conv3.weight.data)
+        factors[idx] = sign[idx]
+        self.conv2.bn.weight.data = factors
+        self.conv3.weight.data = self.conv3.weight.data * r
+
         factors = self.conv2.bn.weight.data.clone()
         factors0 = factors[:self.conv2.ch0]
         factors1 = factors[self.conv2.ch0::]
+
+        if logger:
+            logger.info("factors0 (updated): %s" % str(factors0.tolist()))
+            logger.info("factors1 (updated): %s" % str(factors1.tolist()))
+            logger.info("uratio0 (updated): %f, uratio1 (updated): %f" % (
+                (factors0 >= (factors0.max() * 0.01)).float().mean(),
+                (factors1 >= (factors1.max() * 0.01)).float().mean()
+            ))
 
         return factors0, factors1
 
 
 class ResNet(nn.Module):
 
-    def __init__(self, block, layers, num_classes=1000, zero_init_residual=False):
+    def __init__(self, block, layers, logger=None, num_classes=1000, zero_init_residual=False):
         super(ResNet, self).__init__()
         self.inplanes = 64
         self.conv1 = nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1,
@@ -310,6 +347,8 @@ class ResNet(nn.Module):
         self.layer4 = self._make_layer(block, 512, layers[3], stride=2)
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
         self.fc = nn.Linear(512 * block.expansion, num_classes)
+
+        self.logger = logger
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
@@ -364,9 +403,12 @@ class ResNet(nn.Module):
         factors = {}
         for name, m in self.named_modules():
             if isinstance(m, Bottleneck):
-                factors0, factors1 = m.allocate()
+                if self.logger:
+                    self.logger.info("=====> allocate layer %s. <=====" % name)
+                factors0, factors1 = m.allocate(self.logger)
                 factors[name+'-0'] = factors0
                 factors[name+'-1'] = factors1
+
         return factors
                 
 
