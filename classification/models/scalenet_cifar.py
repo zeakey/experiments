@@ -307,21 +307,23 @@ class Bottleneck(nn.Module):
         self.conv2.bn.bias.data[transfer_mask] = 0
         self.conv3.weight.data[:, transfer_mask, :, :] = 0
 
-        # useful_mask = useful_mask[order_new]
-        # self.conv2.bn.weight.data[1-useful_mask] = 1
-        # self.conv2.bn.bias.data[1-useful_mask] = 0
-        # self.conv3.weight.data[:, 1-useful_mask, :, :] = 0
+        useful_mask = useful_mask[order_new]
+        self.conv2.bn.weight.data[1-useful_mask] = 1
+        self.conv2.bn.bias.data[1-useful_mask] = 0
+        self.conv3.weight.data[:, 1-useful_mask, :, :] = 0
+
         # rescale bn factors to 1
-        # factors = self.conv2.bn.weight.data.clone()
-        # r = torch.ones_like(factors)
-        # sign = torch.sign(factors)
-        # idx = (torch.abs(factors) <= 1) * (torch.abs(factors) > 0)
-        # r[idx] = factors[idx]
-        # r = r.view(1, r.numel(), 1, 1)
-        # r = r.expand_as(self.conv3.weight.data)
-        # factors[idx] = sign[idx]
-        # self.conv2.bn.weight.data = factors
-        # self.conv3.weight.data = self.conv3.weight.data * r
+        if True:
+            factors = self.conv2.bn.weight.data.clone()
+            r = torch.ones_like(factors)
+            sign = torch.sign(factors)
+            idx = (torch.abs(factors) < 1) * (torch.abs(factors) > 0)
+            r[idx] = factors[idx]
+            r = r.view(1, r.numel(), 1, 1)
+            r = r.expand_as(self.conv3.weight.data)
+            factors[idx] = sign[idx]
+            self.conv2.bn.weight.data = factors
+            self.conv3.weight.data = self.conv3.weight.data * r
 
         factors = self.conv2.bn.weight.data.clone().abs()
         factors0 = factors[:self.conv2.ch0]
