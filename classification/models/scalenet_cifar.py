@@ -135,36 +135,44 @@ class Bottleneck(nn.Module):
 
         return out
 
-    def allocate(self, logger=None):
-        factors = self.conv2.bn.weight.data.clone()
+    def allocate(self, threshold=0.7, logger=None):
+        factors = self.conv2.bn.weight.data.clone().abs()
         factors0 = factors[:self.conv2.ch0]
         factors1 = factors[self.conv2.ch0::]
 
         # a channel is useful if its factor value is greater
         # than (or equal) 0.01 * maximal-factor
-        factors0mask = (factors0 >= (factors0.max() * 0.01)).float()
-        factors1mask = (factors1 >= (factors1.max() * 0.01)).float()
+        useful_mask = factors >= (factors.max() * 0.01)
+        useful_mask0 = (factors0 >= (factors0.max() * 0.01)).float()
+        useful_mask1 = (factors1 >= (factors1.max() * 0.01)).float()
+
+        if logger:
+            logger.info("useless factors: %s" % str(factors[1-useful_mask].tolist()))
 
         # utilization ratio
-        uratio0 = factors0mask.mean()
-        uratio1 = factors1mask.mean()
-
-        ch0 = self.conv2.ch0
-        ch1 = self.conv2.ch1
+        uratio = (factors >= (factors.max() * 0.01)).float().mean()
+        uratio0 = useful_mask0.mean()
+        uratio1 = useful_mask1.mean()
 
         if logger:
             logger.info("ch0: %d, ch1: %d" % (self.conv2.ch0, self.conv2.ch1))
             logger.info("conv0 useful: %d, useless: %d" % (
-                (factors0 >= (factors0.max() * 0.01)).sum(),
-                (factors0 < (factors0.max() * 0.01)).sum()
+                useful_mask0.sum(),
+                (1 - useful_mask0).sum()
                 ))
             logger.info("conv1 useful: %d, useless: %d" % (
-                (factors1 >= (factors0.max() * 0.01)).sum(),
-                (factors1  < (factors1.max() * 0.01)).sum()
+                useful_mask1.sum(),
+                (1-useful_mask1).sum()
                 ))
             logger.info("factors0: %s" % str(factors0.tolist()))
             logger.info("factors1: %s" % str(factors1.tolist()))
             logger.info("uratio0: %f, uratio1: %f" % (uratio0, uratio1))
+
+        if uratio >= threshold:
+            return factors0, factors1, False
+
+        ch0 = self.conv2.ch0
+        ch1 = self.conv2.ch1
 
         ch_transfer = -1
         if uratio0 > uratio1:
@@ -172,10 +180,10 @@ class Bottleneck(nn.Module):
             # b: total number of neurons in conv1
             # c: number of useless neurons in conv0
             # d: total number of neurons in conv0
-            a = (1 - factors1mask).sum()
-            b = factors1mask.numel()
-            c = (1 - factors0mask).sum()
-            d = factors0mask.numel()
+            a = (1 - useful_mask1).sum()
+            b = useful_mask1.numel()
+            c = (1 - useful_mask0).sum()
+            d = useful_mask0.numel()
 
             # \frac{a-x}{b} = \frac{c+x}{d}
             # x = \frac{ad - cb}{b + d}
@@ -185,27 +193,28 @@ class Bottleneck(nn.Module):
                 ch_transfer = a
 
         elif uratio1 > uratio0:
-            a = (1 - factors0mask).sum()
-            b = factors0mask.numel()
-            c = (1 - factors1mask).sum()
-            d = factors1mask.numel()
+            a = (1 - useful_mask0).sum()
+            b = useful_mask0.numel()
+            c = (1 - useful_mask1).sum()
+            d = useful_mask1.numel()
             ch_transfer = (a*d - c*b) / (b + d)
             
             if ch_transfer > a:
                 ch_transfer = a
 
         ch_transfer = int(ch_transfer)
+        transfer_mask = torch.zeros_like(factors).byte()
+        order_new = []
 
         if logger:
             logger.info("ch_transfer: %d" % ch_transfer)
 
         if ch_transfer <= 0:
-            return factors0, factors1
+            return factors0, factors1, False
 
         if uratio0 >= uratio1:
             # conv0 is more important than conv1
             # conv1 -> conv0
-
             conv_weight_old = torch.cat((self.conv2.conv0.weight.data,
                                          self.conv2.conv1.weight.data), dim=0)
 
@@ -232,31 +241,22 @@ class Bottleneck(nn.Module):
             self.conv2.conv0 = nn.Conv2d(inplanes, ch0+ch_transfer, kernel_size=kernel_size,
                               stride=stride, padding=padding, bias=False).cuda()
             self.conv2.conv0.weight.data = conv_weight_new[:ch0+ch_transfer, :, :, :]
+            # reinitiate conv parameters
+            torch.nn.init.kaiming_normal_(self.conv2.conv0.weight.data[-ch_transfer::], mode='fan_out', nonlinearity='relu')
 
             self.conv2.conv1 = nn.Conv2d(inplanes, ch1-ch_transfer, kernel_size=kernel_size,
                               stride=stride, padding=padding, bias=False).cuda()
             self.conv2.conv1.weight.data = conv_weight_new[ch0+ch_transfer::, :, :, :]
 
-
-            #################################################
-            # NOTE: adjust other parameters order accordingly
-            #################################################
-            self.conv2.bn.weight.data = self.conv2.bn.weight.data[order_new]
-            self.conv2.bn.bias.data = self.conv2.bn.bias.data[order_new]
-            self.conv3.weight.data = self.conv3.weight.data[:, order_new, :, :]
-
-            # reinitiate parameters
-            torch.nn.init.kaiming_normal_(self.conv2.conv0.weight.data[-ch_transfer::, :, :, :], mode='fan_out', nonlinearity='relu')
-            self.conv2.bn.weight.data[ch0:ch0+ch_transfer] = 1
-            self.conv2.bn.bias.data[ch0:ch0+ch_transfer] = 0
-            self.conv3.weight.data[:, ch0:ch0+ch_transfer, :, :] = 0
+            transfer_mask[ch0:ch0+ch_transfer] = 1
 
             # update ch0 and ch1 at last
             self.conv2.ch0 = self.conv2.ch0 + ch_transfer
             self.conv2.ch1 = self.conv2.ch1 - ch_transfer
 
         elif uratio0 < uratio1:
-
+            # conv1 is more important than conv1
+            # conv0 -> conv1
             conv_weight_old = torch.cat((self.conv2.conv0.weight.data,
                                          self.conv2.conv1.weight.data), dim=0)
 
@@ -286,38 +286,44 @@ class Bottleneck(nn.Module):
             self.conv2.conv1 = nn.Conv2d(inplanes, ch1+ch_transfer, kernel_size=kernel_size,
                               stride=stride, padding=padding, bias=False).cuda()
             self.conv2.conv1.weight.data = conv_weight_new[ch0-ch_transfer::, :, :, :]
+            # reinitiate conv parameters
+            torch.nn.init.kaiming_normal_(self.conv2.conv1.weight.data[-ch_transfer::], mode='fan_out', nonlinearity='relu')
 
-            #################################################
-            # NOTE: adjust other parameters order accordingly
-            #################################################
-            self.conv2.bn.weight.data = self.conv2.bn.weight.data[order_new]
-            self.conv2.bn.bias.data = self.conv2.bn.bias.data[order_new]
-
-            self.conv3.weight.data = self.conv3.weight.data[:, order_new, :, :]
-
-            # reinitiate parameters
-            torch.nn.init.kaiming_normal_(self.conv2.conv1.weight.data[-ch_transfer::, :, :, :], mode='fan_out', nonlinearity='relu')
-            self.conv2.bn.weight.data[-ch_transfer::] = 1
-            self.conv2.bn.bias.data[-ch_transfer::] = 0
-            self.conv3.weight.data[:, -ch_transfer::, :, :] = 0
+            transfer_mask[-ch_transfer::] = 1
 
             # update ch0 and ch1 at last
             self.conv2.ch0 = self.conv2.ch0 - ch_transfer
             self.conv2.ch1 = self.conv2.ch1 + ch_transfer
 
-        # rescale bn factors to 1
-        factors = self.conv2.bn.weight.data.clone()
-        r = torch.ones_like(factors)
-        sign = torch.sign(factors)
-        idx = (torch.abs(factors) <= 1) * (torch.abs(factors) > 0)
-        r[idx] = factors[idx]
-        r = r.view(1, r.numel(), 1, 1)
-        r = r.expand_as(self.conv3.weight.data)
-        factors[idx] = sign[idx]
-        self.conv2.bn.weight.data = factors
-        self.conv3.weight.data = self.conv3.weight.data * r
+        #################################################
+        # NOTE: adjust other parameters order accordingly
+        #################################################
+        self.conv2.bn.weight.data = self.conv2.bn.weight.data[order_new]
+        self.conv2.bn.bias.data = self.conv2.bn.bias.data[order_new]
+        self.conv3.weight.data = self.conv3.weight.data[:, order_new, :, :]
 
-        factors = self.conv2.bn.weight.data.clone()
+        # reinitiate parameters
+        self.conv2.bn.weight.data[transfer_mask] = 1
+        self.conv2.bn.bias.data[transfer_mask] = 0
+        self.conv3.weight.data[:, transfer_mask, :, :] = 0
+
+        # useful_mask = useful_mask[order_new]
+        # self.conv2.bn.weight.data[1-useful_mask] = 1
+        # self.conv2.bn.bias.data[1-useful_mask] = 0
+        # self.conv3.weight.data[:, 1-useful_mask, :, :] = 0
+        # rescale bn factors to 1
+        # factors = self.conv2.bn.weight.data.clone()
+        # r = torch.ones_like(factors)
+        # sign = torch.sign(factors)
+        # idx = (torch.abs(factors) <= 1) * (torch.abs(factors) > 0)
+        # r[idx] = factors[idx]
+        # r = r.view(1, r.numel(), 1, 1)
+        # r = r.expand_as(self.conv3.weight.data)
+        # factors[idx] = sign[idx]
+        # self.conv2.bn.weight.data = factors
+        # self.conv3.weight.data = self.conv3.weight.data * r
+
+        factors = self.conv2.bn.weight.data.clone().abs()
         factors0 = factors[:self.conv2.ch0]
         factors1 = factors[self.conv2.ch0::]
 
@@ -329,7 +335,7 @@ class Bottleneck(nn.Module):
                 (factors1 >= (factors1.max() * 0.01)).float().mean()
             ))
 
-        return factors0, factors1
+        return factors0, factors1, True
 
 
 class ResNet(nn.Module):
@@ -399,17 +405,16 @@ class ResNet(nn.Module):
 
         return x
     
-    def allocate(self):
-        factors = {}
+    def allocate(self, threshold=0.7):
+        results = {}
         for name, m in self.named_modules():
             if isinstance(m, Bottleneck):
                 if self.logger:
                     self.logger.info("=====> allocate layer %s. <=====" % name)
-                factors0, factors1 = m.allocate(self.logger)
-                factors[name+'-0'] = factors0
-                factors[name+'-1'] = factors1
+                factors0, factors1, triggered = m.allocate(threshold=threshold, logger=self.logger)
+                results[name] = (factors0, factors1, triggered)
 
-        return factors
+        return results
                 
 
 
