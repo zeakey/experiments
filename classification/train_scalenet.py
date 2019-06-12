@@ -58,7 +58,7 @@ parser.add_argument('--benchmark', dest='benchmark', action="store_true")
 parser.add_argument('--gpu', default=None, type=int, metavar='N', help='GPU ID')
 
 parser.add_argument('--l1lambda', default=1e-5, type=float, help='lambda for L-1 penalty')
-parser.add_argument('--allocate-freq', default=20, type=int, help='allocate frequency')
+parser.add_argument('--allocate-epochs', default=40, type=int, help='allocate epochs')
 parser.add_argument('--debug', action="store_true")
 
 args = parser.parse_args()
@@ -122,13 +122,18 @@ criterion = torch.nn.CrossEntropyLoss()
 delta_l1weight = 5e-6
 l1weight = {}
 uratio = {}
+uratio0 = {}
+uratio1 = {}
 delta_ur = 0.01
 def uratio_func(x):
+    x = x.abs()
     return (x >= x.max()*0.01).float().mean()
 for name, m in model.named_modules():
     if isinstance(m, MSConv):
         l1weight[name] = 0
         uratio[name] = uratio_func(m.bn.weight.data)
+        uratio0[name] = uratio_func(m.bn.weight.data[:m.ch0])
+        uratio1[name] = uratio_func(m.bn.weight.data[m.ch0::])
 
 def main():
 
@@ -199,44 +204,24 @@ def main():
 
     for epoch in range(args.start_epoch, CONFIGS["OPTIMIZER"]["EPOCHS"]):
 
-        if args.debug:
-            temperature = model.allocate()
-            for k, v in temperature.items():
-                factors0, factors1, triggered = v
-                uratio0 = (factors0 >= (factors0.max() * 0.01)).float().mean()
-                uratio1 = (factors1 >= (factors1.max() * 0.01)).float().mean()
-                tfboard_writer.add_scalar('temperature/'+k+"0", uratio0.item(), epoch-1)
-                tfboard_writer.add_scalar('temperature/'+k+"1", uratio1.item(), epoch-1)
-                tfboard_writer.add_scalar('channels/'+k+"0", factors0.numel(), epoch-1)
-                tfboard_writer.add_scalar('channels/'+k+"0", factors0.numel(), epoch-1)
-
-                if triggered:
-                    assert k+".conv2" in l1weight.keys()
-                    l1weight[k+".conv2"] = 0
-
         # record init l1weight
         if epoch == 0:
             for k, v in l1weight.items():
                 tfboard_writer.add_scalar('l1weight/'+k, v, -1)
+
             for k, v in uratio.items():
                 tfboard_writer.add_scalar('uratio/'+k, v, -1)
+
+            for k, v in uratio0.items():
+                tfboard_writer.add_scalar('uratio-0/'+k, v, -1)
+
+            for k, v in uratio1.items():
+                tfboard_writer.add_scalar('uratio-1/'+k, v, -1)
 
         # train and evaluate
         loss, L1 = train(train_loader, epoch)
         acc1, acc5 = validate(val_loader, epoch)
         scheduler.step()
-
-        # adjust l1 loss weight:
-        for name, m in model.named_modules():
-            if isinstance(m, MSConv):
-                ur = uratio_func(m.bn.weight.data)
-                # uratio[name]: utilization ratio of last epoch
-                # ur: current utilization ratio
-                if uratio[name] - ur < delta_ur:
-                    l1weight[name] += delta_l1weight
-                uratio[name] = ur
-                tfboard_writer.add_scalar('l1weight/'+name, l1weight[name], epoch)
-                tfboard_writer.add_scalar('uratio/'+name, uratio[name], epoch)
 
         tfboard_writer.add_scalar('train/loss_epoch', loss, epoch)
         tfboard_writer.add_scalar('train/BN-L1', L1, epoch)
@@ -244,22 +229,51 @@ def main():
         tfboard_writer.add_scalar('test/acc1_epoch', acc1, epoch)
         tfboard_writer.add_scalar('test/acc5_epoch', acc5, epoch)
 
-        # allocate channels
-        temperature = model.allocate(threshold=0.7)
-        for k, v in temperature.items():
-            factors0, factors1, triggered = v
-            uratio0 = (factors0 >= (factors0.max() * 0.01)).float().mean()
-            uratio1 = (factors1 >= (factors1.max() * 0.01)).float().mean()
-            tfboard_writer.add_scalar('temperature/'+k+"0", uratio0.item(), epoch)
-            tfboard_writer.add_scalar('temperature/'+k+"1", uratio1.item(), epoch)
-            tfboard_writer.add_scalar('channels/'+k+"-0", factors0.numel(), epoch)
-            tfboard_writer.add_scalar('channels/'+k+"-1", factors1.numel(), epoch)
+        if epoch <= args.allocate_epochs:
 
-            if triggered:
-                # if channel transfer is triggered,
-                # reset l1 loss weight to 0
-                assert k+".conv2" in l1weight.keys()
-                l1weight[k+".conv2"] = 0
+            # adjust l1 loss weight:
+            for name, m in model.named_modules():
+                if isinstance(m, MSConv):
+                    ur = uratio_func(m.bn.weight.data)
+                    # uratio[name]: utilization ratio of last epoch
+                    # ur: current utilization ratio
+                    logger.info("name %s, previous uratio %f, current uratio %f" % (
+                        name, uratio[name], ur
+                    ))
+                    if uratio[name] - ur < delta_ur:
+                        l1weight[name] += delta_l1weight
+                    uratio[name] = ur
+                    tfboard_writer.add_scalar('l1weight/'+name, l1weight[name], epoch)
+
+            # allocate channels
+            results = model.allocate(threshold=0.7)
+
+            for k, v in results.items():
+                # example k: 'layer1.0'
+                factors0, factors1, triggered = v
+                ur0 = uratio_func(factors0)
+                ur1 = uratio_func(factors1)
+                ur  = uratio_func(torch.cat((factors0, factors1)))
+                logger.info("name %s, uratio0 %f, uratio1 %f, uratio %f, triggered %s" % (
+                        k+".conv2", ur0, ur1, ur, str(triggered)
+                    ))
+                # uratio key example: 'layer1.0.conv2'
+                tfboard_writer.add_scalar('uratio-0/'+k+".conv2", ur0.item(), epoch)
+                tfboard_writer.add_scalar('uratio-1/'+k+".conv2", ur1.item(), epoch)
+                tfboard_writer.add_scalar('uratio/'+k+".conv2", ur.item(), epoch)
+
+                tfboard_writer.add_scalar('channels-0/'+k, factors0.numel(), epoch-1)
+                tfboard_writer.add_scalar('channels-1/'+k, factors1.numel(), epoch-1)
+
+                if triggered:
+                    # if channel transfer is triggered,
+                    # reset l1 loss weight to 0
+                    assert k+".conv2" in l1weight.keys()
+                    l1weight[k+".conv2"] = 0
+
+            if epoch >= args.allocate_epochs:
+                for k in l1weight.keys():
+                    l1weight[k] = 0
 
         # remember best prec@1 and save checkpoint
         is_best = acc1 > best_acc1
