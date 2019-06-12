@@ -168,7 +168,11 @@ class Bottleneck(nn.Module):
             logger.info("factors1: %s" % str(factors1.tolist()))
             logger.info("uratio0: %f, uratio1: %f" % (uratio0, uratio1))
 
-        if uratio >= threshold:
+        # channel allocation is triggered if eight uratio0
+        # or uratio1 is less than  threshold
+        triggered = uratio0 <= threshold and uratio1 <= threshold
+
+        if not triggered:
             return factors0, factors1, False
 
         ch0 = self.conv2.ch0
