@@ -170,7 +170,7 @@ class Bottleneck(nn.Module):
 
         # channel allocation is triggered if eight uratio0
         # or uratio1 is less than  threshold
-        triggered = uratio0 <= threshold and uratio1 <= threshold
+        triggered = uratio0 <= threshold or uratio1 <= threshold
 
         if not triggered:
             return factors0, factors1, False
