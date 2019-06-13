@@ -58,7 +58,8 @@ parser.add_argument('--benchmark', dest='benchmark', action="store_true")
 parser.add_argument('--gpu', default=None, type=int, metavar='N', help='GPU ID')
 
 parser.add_argument('--l1lambda', default=1e-5, type=float, help='lambda for L-1 penalty')
-parser.add_argument('--allocate-epochs', default=40, type=int, help='allocate epochs')
+parser.add_argument('--allocate-epochs', default=60, type=int, help='allocate epochs')
+parser.add_argument('--retrain', action="store_true")
 parser.add_argument('--debug', action="store_true")
 
 args = parser.parse_args()
@@ -274,6 +275,24 @@ def main():
             if epoch >= args.allocate_epochs:
                 for k in l1weight.keys():
                     l1weight[k] = 0
+
+            if epoch == args.allocate_epochs and args.retrain:
+                logger.info("reinitiate parameters...")
+                for name, m in model.named_modules():
+                    logger.info("%s, %s" % (name, str(type(m))))
+                    if isinstance(m, torch.nn.Conv2d):
+                        torch.nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                    elif isinstance(m, torch.nn.BatchNorm2d):
+                        torch.nn.init.constant_(m.weight, 1)
+                        torch.nn.init.constant_(m.bias, 0)
+                        torch.nn.init.constant_(m.running_mean, 0)
+                        torch.nn.init.constant_(m.running_var, 1)
+                        m.num_batches_tracked.zero_()
+                    elif isinstance(m, torch.nn.Linear):
+                        torch.nn.init.constant_(m.weight, 0)
+                    else:
+                        logger.info("layer %s was not re-initiated!" % name)
+
 
         # remember best prec@1 and save checkpoint
         is_best = acc1 > best_acc1
