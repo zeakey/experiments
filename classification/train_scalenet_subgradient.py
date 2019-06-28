@@ -217,6 +217,8 @@ def main():
         tfboard_writer.add_scalar('test/acc5_epoch', acc5, epoch)
 
         # record uratio
+        useful0, useful1 = 0, 0
+        any_allocate = False
         for name, m in model.named_modules():
             if isinstance(m, Bottleneck):
                 factors = m.conv2.bn.weight.data.clone().abs()
@@ -239,20 +241,29 @@ def main():
                 tfboard_writer.add_scalar('channels-0/'+name, m.conv2.ch0, epoch)
                 tfboard_writer.add_scalar('channels-1/'+name, m.conv2.ch1, epoch)
 
-                if abs(uratio0 - uratio1)>=0.2 and epoch%10 == 0 and epoch<=60 and epoch>0:
-                    if uratio0 > uratio1:
-                        a = (1 - useful_mask1).sum()
-                        b = useful_mask1.numel()
-                        c = (1 - useful_mask0).sum()
-                        d = useful_mask0.numel()
-                        ch_transfer = (a*d - c*b) / (b + d)
-                        ch_transfer = int(ch_transfer)
-                        if ch_transfer == 0:
-                            ch_transfer = 1
+                useful0 += int(useful_mask0.sum().item())
+                useful1 += int(useful_mask1.sum().item())
 
+                logger.info("Layer {:<15} uratio {:<15} uratio0 {:<15} uratio1 {:<15} channels0 {:<15} channels1 {:<15} useful0 {:<15} useful1 {:<15}".format(
+                    name, "{:.4f}".format(uratio), "{:.4f}".format(uratio0), "{:.4f}".format(uratio1),
+                    int(factors0.numel()), int(factors1.numel()), int(useful_mask0.sum().item()), int(useful_mask1.sum().item())
+                ))
+
+                if abs(uratio0 - uratio1)>=0.15 and epoch%20 == 0 and epoch<=60 and epoch>0:
+                    if uratio0 > uratio1:
+                        ch_transfer = (1-useful_mask1).sum()
                         channels = [m.conv2.ch0+ch_transfer, m.conv2.ch1-ch_transfer]
-                        m.allocate(channels)
-        model.cuda()
+                    elif uratio0 < uratio1:
+                        ch_transfer = (1-useful_mask0).sum()
+                        channels = [m.conv2.ch0-ch_transfer, m.conv2.ch1+ch_transfer]
+                    m.allocate(channels)
+
+                    any_allocate = True
+
+                if any_allocate:
+                    model.cuda()
+
+        logger.info("total useful0 {:<15}, useful1 {:<15}".format(useful0, useful1))
 
         # remember best prec@1 and save checkpoint
         is_best = acc1 > best_acc1
