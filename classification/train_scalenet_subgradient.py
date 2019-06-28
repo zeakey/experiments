@@ -251,13 +251,21 @@ def main():
 
                 if abs(uratio0 - uratio1)>=0.15 and epoch%20 == 0 and epoch<=60 and epoch>0:
                     if uratio0 > uratio1:
-                        ch_transfer = (1-useful_mask1).sum()
+                        a = (1 - useful_mask1).sum()
+                        b = useful_mask1.numel()
+                        c = (1 - useful_mask0).sum()
+                        d = useful_mask0.numel()
+                        ch_transfer = int((a*d - c*b) / (b + d))
                         channels = [m.conv2.ch0+ch_transfer, m.conv2.ch1-ch_transfer]
                     elif uratio0 < uratio1:
-                        ch_transfer = (1-useful_mask0).sum()
+                        a = (1 - useful_mask0).sum()
+                        b = useful_mask0.numel()
+                        c = (1 - useful_mask1).sum()
+                        d = useful_mask1.numel()
+                        ch_transfer = int((a*d - c*b) / (b + d))
                         channels = [m.conv2.ch0-ch_transfer, m.conv2.ch1+ch_transfer]
-                    m.allocate(channels)
 
+                    m.allocate(channels)
                     any_allocate = True
 
                 if any_allocate:
@@ -337,7 +345,7 @@ def train(train_loader, epoch):
         optimizer.zero_grad()
         loss.backward()
         L1 = 0
-        if args.sparsity >= 0:
+        if args.sparsity >= 0 and epoch <= 60:
             for m in model.modules():
                 if isinstance(m, MSConv):
                     if args.sparsity > 0:
