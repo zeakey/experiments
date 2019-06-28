@@ -267,8 +267,8 @@ class Bottleneck(nn.Module):
         bn_weight[bn_weight > 1] = 1
         self.conv3.weight.data = self.conv3.weight.data * bn_weight.view(1, -1, 1, 1).expand_as(self.conv3.weight.data)
         self.conv2.bn.bias.data = self.conv2.bn.bias.data / bn_weight
-        pos_idx = (self.conv2.bn.weight.data >= 0) * (self.conv2.bn.weight.data <= 1)
-        neg_idx = (self.conv2.bn.weight.data <= 0) * (self.conv2.bn.weight.data >= -1)
+        pos_idx = (self.conv2.bn.weight.data > 0) * (self.conv2.bn.weight.data < 1)
+        neg_idx = (self.conv2.bn.weight.data < 0) * (self.conv2.bn.weight.data > -1)
         self.conv2.bn.weight.data[pos_idx] = 1
         self.conv2.bn.weight.data[neg_idx] = -1
 
