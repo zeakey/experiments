@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.utils.model_zoo as model_zoo
 import math
+import numpy as np
 
 __all__ = ['ResNet', 'resnet18', 'resnet34', 'resnet50', 'resnet101',
            'resnet152']
@@ -147,6 +148,7 @@ class Bottleneck(nn.Module):
         factors = self.conv2.bn.weight.data.clone().abs()
         factors0 = factors[:ch0]
         factors1 = factors[ch0::]
+        useful_mask = factors >= (factors.max() * 0.01)
 
         ch_transfer = abs(int(ch0 - channels[0]))
         transfer_mask = torch.zeros_like(factors).byte()
@@ -240,6 +242,9 @@ class Bottleneck(nn.Module):
             self.conv2.ch0 = self.conv2.ch0 - ch_transfer
             self.conv2.ch1 = self.conv2.ch1 + ch_transfer
 
+        useful_mask = useful_mask[order_new]
+        useful_idx = np.where(useful_mask.tolist())[0].tolist()
+        useless_idx = np.where((1-useful_mask).tolist())[0].tolist()
         #################################################
         # NOTE: adjust other parameters order accordingly
         #################################################
@@ -253,19 +258,17 @@ class Bottleneck(nn.Module):
 
         # reinitiate parameters
         # bn
-        self.conv2.bn.weight.data[transfer_mask].fill_(1)
-        self.conv2.bn.bias.data[transfer_mask].fill_(0)
-        self.conv2.bn.running_mean[transfer_mask].fill_(0)
-        self.conv2.bn.running_var[transfer_mask].fill_(1)
+        self.conv2.bn.weight.data[1-useful_mask] = 1
+        self.conv2.bn.bias.data[1-useful_mask] = 0
+        self.conv2.bn.running_mean[1-useful_mask] = 0
+        self.conv2.bn.running_var[1-useful_mask] = 1
         # conv3
-        n = self.conv3.weight.data.size(0) * self.conv3.weight.data.size(1)
-        self.conv3.weight.data[:, transfer_mask, :, :].normal_(0, math.sqrt(2.0 / n))
+        self.conv3.weight.data[:, 1-useful_mask, :, :] = 0
 
         # rescale bn factors
         bn_weight = self.conv2.bn.weight.data.abs()
-        bn_weight[bn_weight < 1e-3] = 1e-3
         bn_weight[bn_weight > 1] = 1
-        self.conv3.weight.data = self.conv3.weight.data * bn_weight.view(1, -1, 1, 1).expand_as(self.conv3.weight.data)
+        self.conv3.weight.data = self.conv3.weight.data * bn_weight.view(1, -1, 1, 1)
         self.conv2.bn.bias.data = self.conv2.bn.bias.data / bn_weight
         pos_idx = (self.conv2.bn.weight.data > 0) * (self.conv2.bn.weight.data < 1)
         neg_idx = (self.conv2.bn.weight.data < 0) * (self.conv2.bn.weight.data > -1)
