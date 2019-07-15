@@ -1,7 +1,7 @@
 import matplotlib
 matplotlib.use('Agg')
 
-import argparse, time, logging
+import argparse, time
 
 import numpy as np
 import mxnet as mx
@@ -15,6 +15,13 @@ from gluoncv.model_zoo import get_model
 from gluoncv.utils import makedirs, TrainingHistory
 from gluoncv.data import transforms as gcv_transforms
 from tensorboardX import SummaryWriter
+
+from vltools import Logger
+from os.path import join, split
+
+# Soft pruning
+# Paper: https://www.ijcai.org/proceedings/2018/0309.pdf
+# Torch implementation: https://github.com/he-y/soft-filter-pruning
 
 # CLI
 def parse_args():
@@ -51,8 +58,6 @@ def parse_args():
                         help='directory of saved models')
     parser.add_argument('--resume-from', type=str,
                         help='resume training from the model')
-    parser.add_argument('--save-plot-dir', type=str, default='.',
-                        help='the path to save the history plot')
     #
     parser.add_argument('--pruning-rate', type=float, default=0.1,
                         help='learning rate. default is 0.1.')
@@ -145,10 +150,8 @@ def main():
     
     tfboard_writer = SummaryWriter(save_dir)
 
-    plot_path = opt.save_plot_dir
-
-    logging.basicConfig(level=logging.INFO)
-    logging.info(opt)
+    logger = Logger(join(opt.save_dir, "log.txt"))
+    logger.info(opt)
 
     transform_train = transforms.Compose([
         gcv_transforms.RandomCrop(32, pad=4),
@@ -237,20 +240,20 @@ def main():
             name, acc = train_metric.get()
             name, val_acc = test(ctx, val_data)
             train_history.update([1-acc, 1-val_acc])
-            train_history.plot(save_path='%s/%s_history.png'%(plot_path, model_name))
+            train_history.plot(save_path='%s/%s_history.pdf'%(opt.save_dir, model_name))
 
             if val_acc > best_val_score:
                 best_val_score = val_acc
                 net.save_parameters('%s/%.4f-cifar-%s-%d-best.params'%(save_dir, best_val_score, model_name, epoch))
 
             name, val_acc = test(ctx, val_data)
-            logging.info('[Epoch %d] train=%f val=%f loss=%f time: %f' %
+            logger.info('[Epoch %d] train=%f val=%f loss=%f time: %f' %
                 (epoch, acc, val_acc, train_loss, time.time()-tic))
             
             # for k, v in conv_params.items():
             #     np_data = v.data().asnumpy()
             #     np_grad = v.grad().asnumpy()
-            #     logging.info("Param name: %s, data-mean: %.5f, data-std: %.5f, grad-mean: %.5f, grad-std: %.5f" % (
+            #     logger.info("Param name: %s, data-mean: %.5f, data-std: %.5f, grad-mean: %.5f, grad-std: %.5f" % (
             #         k, np_data.mean(), np_data.std(), np_grad.mean(), np_grad.std()
             #     ))
 
