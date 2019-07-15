@@ -235,8 +235,8 @@ def main():
                 net.save_parameters('%s/%.4f-cifar-%s-%d-best.params'%(save_dir, best_val_score, model_name, epoch))
 
             name, val_acc = test(ctx, val_data)
-            logger.info('[Epoch %d] train=%f val=%f loss=%f time: %f' %
-                (epoch, acc, val_acc, train_loss, time.time()-tic))
+            logger.info('[Epoch %d] train=%.5f val=%.5f (best=%.5f) loss=%.3f time: %.1f' %
+                (epoch, acc, val_acc, best_val_score, train_loss, time.time()-tic))
             
             # for k, v in conv_params.items():
             #     np_data = v.data().asnumpy()
