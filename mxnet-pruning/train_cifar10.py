@@ -95,22 +95,6 @@ class Mask(object):
     def backward_mask(self):
         pass
 
-def do_mask(param, mask):
-    pass
-
-def get_mask(weight, ratio=0.6):
-    N = weight.shape[0]
-    num_pruned = int(N * ratio)
-
-    mask = np.ones_like(weight)
-    weight = weight.reshape(weight.shape[0], -1)
-    norm = np.sqrt((weight * weight).sum(axis=1))
-    indices_to_be_pruned = np.argsort(norm)[:num_pruned].tolist()
-    mask[indices_to_be_pruned, :, :, :] = 0
-
-    return mask
-
-
 def main():
     opt = parse_args()
     
