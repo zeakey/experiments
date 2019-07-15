@@ -40,13 +40,13 @@ def parse_args():
                         help='learning rate. default is 0.1.')
     parser.add_argument('--momentum', type=float, default=0.9,
                         help='momentum value for optimizer, default is 0.9.')
-    parser.add_argument('--wd', type=float, default=0.0001,
+    parser.add_argument('--wd', type=float, default=0.0005,
                         help='weight decay rate. default is 0.0001.')
-    parser.add_argument('--lr-decay', type=float, default=0.1,
+    parser.add_argument('--lr-decay', type=str, default="10,0.2,0.2,0.2",
                         help='decay rate of learning rate. default is 0.1.')
     parser.add_argument('--lr-decay-period', type=int, default=0,
                         help='period in epoch for learning rate decays. default is 0 (has no effect).')
-    parser.add_argument('--lr-decay-epoch', type=str, default='100,150',
+    parser.add_argument('--lr-decay-epoch', type=str, default='1,60,120,160',
                         help='epochs at which learning rate decays. default is 40,60.')
     parser.add_argument('--drop-rate', type=float, default=0.0,
                         help='dropout rate for wide resnet. default is 0.')
@@ -110,7 +110,7 @@ def main():
     context = [mx.gpu(i) for i in range(num_gpus)] if num_gpus > 0 else [mx.cpu()]
     num_workers = opt.num_workers
 
-    lr_decay = opt.lr_decay
+    lr_decay = [float(i) for i in opt.lr_decay.split(',')]
     lr_decay_epoch = [int(i) for i in opt.lr_decay_epoch.split(',')] + [np.inf]
 
     model_name = opt.model
@@ -202,7 +202,7 @@ def main():
             alpha = 1
 
             if epoch == lr_decay_epoch[lr_decay_count]:
-                trainer.set_learning_rate(trainer.learning_rate*lr_decay)
+                trainer.set_learning_rate(trainer.learning_rate*lr_decay[lr_decay_count])
                 lr_decay_count += 1
 
             for i, batch in enumerate(train_data):
@@ -221,12 +221,17 @@ def main():
                 name, acc = train_metric.get()
                 iteration += 1
 
+            # evaluate before pruning
+            name, val_acc_before = test(ctx, val_data)
+
             mask.update_mask()
             mask.forward_mask()
 
+            # evaluate after pruning
+            name, val_acc = test(ctx, val_data)
+
             train_loss /= batch_size * num_batch
             name, acc = train_metric.get()
-            name, val_acc = test(ctx, val_data)
             train_history.update([1-acc, 1-val_acc])
             train_history.plot(save_path='%s/%s_history.pdf'%(opt.save_dir, model_name))
 
@@ -235,8 +240,8 @@ def main():
                 net.save_parameters('%s/%.4f-cifar-%s-%d-best.params'%(save_dir, best_val_score, model_name, epoch))
 
             name, val_acc = test(ctx, val_data)
-            logger.info('[Epoch %d] train=%.5f val=%.5f (best=%.5f) loss=%.3f time: %.1f' %
-                (epoch, acc, val_acc, best_val_score, train_loss, time.time()-tic))
+            logger.info('[Epoch %d] train=%.5f val(before=%.5f, after=%.5f, best=%.5f) loss=%.3f time: %.1f' %
+                (epoch, acc, val_acc_before, val_acc, best_val_score, train_loss, time.time()-tic))
             
             # for k, v in conv_params.items():
             #     np_data = v.data().asnumpy()
@@ -247,6 +252,7 @@ def main():
 
             tfboard_writer.add_scalar('train/acc', acc, epoch)
             tfboard_writer.add_scalar('train/loss', train_loss, epoch)
+            tfboard_writer.add_scalar('train/lr', trainer.learning_rate, epoch)
             tfboard_writer.add_scalar('val/acc', val_acc, epoch)
 
             if save_period and save_dir and (epoch + 1) % save_period == 0:
