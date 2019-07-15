@@ -1,7 +1,7 @@
 import matplotlib
 matplotlib.use('Agg')
 
-import argparse, time
+import argparse, time, random
 
 import numpy as np
 import mxnet as mx
@@ -58,6 +58,7 @@ def parse_args():
                         help='directory of saved models')
     parser.add_argument('--resume-from', type=str,
                         help='resume training from the model')
+    parser.add_argument('--seed', type=int, help='Random seed.')
     #
     parser.add_argument('--pruning-rate', type=float, default=0.1,
                         help='learning rate. default is 0.1.')
@@ -98,7 +99,9 @@ class Mask(object):
 
 def main():
     opt = parse_args()
-    
+    if opt.seed is None:
+        opt.seed = random.randint(1, 10000)
+    mx.random.seed(opt.seed)
     batch_size = opt.batch_size
     classes = 10
 
@@ -135,7 +138,7 @@ def main():
     
     tfboard_writer = SummaryWriter(save_dir)
 
-    logger = Logger(join(opt.save_dir, "log.txt"))
+    logger = Logger(join(opt.save_dir, "log-seed%d.txt" % opt.seed))
     logger.info(opt)
 
     transform_train = transforms.Compose([
