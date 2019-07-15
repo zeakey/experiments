@@ -84,7 +84,8 @@ class Mask(object):
             norm = mx.nd.norm(pdata, ord=2, axis=1)
             indices_to_be_pruned = mx.nd.argsort(norm)[:num_pruned]
             self.mask[name] = mx.nd.ones_like(self.mask[name])
-            self.mask[name][indices_to_be_pruned] = 0
+            if len(indices_to_be_pruned) > 0:
+                self.mask[name][indices_to_be_pruned] = 0
 
     def forward_mask(self):
         for name, p in self.params.items():
