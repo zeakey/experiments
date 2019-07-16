@@ -62,8 +62,15 @@ def parse_args():
     #
     parser.add_argument('--pruning-rate', type=float, default=0.1,
                         help='learning rate. default is 0.1.')
+    parser.add_argument('--debug', action="store_true", help='use debug mode')
     opt = parser.parse_args()
     return opt
+
+opt = parse_args()
+if opt.seed is None:
+    opt.seed = random.randint(1, 10000)
+mx.random.seed(opt.seed)
+logger = Logger(join(opt.save_dir, "log-seed%d.txt" % opt.seed))
 
 class Mask(object):
     def __init__(self, parameters, ratio):
@@ -88,6 +95,11 @@ class Mask(object):
             if len(indices_to_be_pruned) > 0:
                 self.mask[name][indices_to_be_pruned] = 0
 
+            if opt.debug:
+                logger.info("Layer %s total %d, pruned %d, pruned indices: %s" % (
+                  name, pdata.shape[0], num_pruned,
+                  str(indices_to_be_pruned.asnumpy().astype(np.int).tolist())))
+
     def forward_mask(self):
         for name, p in self.params.items():
             pdata = self.params[name].data()
@@ -98,10 +110,6 @@ class Mask(object):
         pass
 
 def main():
-    opt = parse_args()
-    if opt.seed is None:
-        opt.seed = random.randint(1, 10000)
-    mx.random.seed(opt.seed)
     batch_size = opt.batch_size
     classes = 10
 
@@ -138,7 +146,6 @@ def main():
     
     tfboard_writer = SummaryWriter(save_dir)
 
-    logger = Logger(join(opt.save_dir, "log-seed%d.txt" % opt.seed))
     logger.info(opt)
 
     transform_train = transforms.Compose([
