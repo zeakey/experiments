@@ -40,7 +40,7 @@ def parse_args():
                         help='learning rate. default is 0.1.')
     parser.add_argument('--momentum', type=float, default=0.9,
                         help='momentum value for optimizer, default is 0.9.')
-    parser.add_argument('--wd', type=float, default=0.0005,
+    parser.add_argument('--wd', type=float, default=0.0001,
                         help='weight decay rate. default is 0.0001.')
     parser.add_argument('--lr-decay', type=str, default="10,0.2,0.2,0.2",
                         help='decay rate of learning rate. default is 0.1.')
@@ -172,6 +172,8 @@ def main():
         _ = net(dummy_data)
         # mask for pruning
         mask = Mask(conv_params, ratio=opt.pruning_rate)
+        mask.update_mask()
+        mask.forward_mask()
 
         train_data = gluon.data.DataLoader(
             gluon.data.vision.CIFAR10(train=True).transform_first(transform_train),
