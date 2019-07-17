@@ -1,7 +1,7 @@
 import matplotlib
 matplotlib.use('Agg')
 
-import argparse, time, random
+import argparse, time, random, os
 
 import numpy as np
 import mxnet as mx
@@ -21,7 +21,7 @@ from os.path import join, split
 
 # Soft pruning
 # Paper: https://www.ijcai.org/proceedings/2018/0309.pdf
-# Torch implementation: https://github.com/he-y/soft-filter-pruning
+# PyTorch implementation: https://github.com/he-y/soft-filter-pruning
 
 # CLI
 def parse_args():
@@ -36,11 +36,11 @@ def parse_args():
                         help='number of preprocessing workers')
     parser.add_argument('--num-epochs', type=int, default=200,
                         help='number of training epochs.')
-    parser.add_argument('--lr', type=float, default=0.1,
+    parser.add_argument('--lr', type=float, default=0.01,
                         help='learning rate. default is 0.1.')
     parser.add_argument('--momentum', type=float, default=0.9,
                         help='momentum value for optimizer, default is 0.9.')
-    parser.add_argument('--wd', type=float, default=0.0001,
+    parser.add_argument('--wd', type=float, default=5e-4,
                         help='weight decay rate. default is 0.0001.')
     parser.add_argument('--lr-decay', type=str, default="10,0.2,0.2,0.2",
                         help='decay rate of learning rate. default is 0.1.')
@@ -70,17 +70,18 @@ opt = parse_args()
 if opt.seed is None:
     opt.seed = random.randint(1, 10000)
 mx.random.seed(opt.seed)
+os.makedirs(opt.save_dir, exist_ok=True)
 logger = Logger(join(opt.save_dir, "log-seed%d.txt" % opt.seed))
 
 class Mask(object):
-    def __init__(self, parameters, ratio):
+    def __init__(self, parameters, rate):
         """
         parameters: dict containing parameters
-        ratio: pruning ratio
+        rate: pruning rate
         """
         self.mask = {}
         self.params = parameters
-        self.ratio = ratio
+        self.rate = rate
 
         for name, p in self.params.items():
             self.mask[name] = mx.nd.ones_like(p.data())
@@ -88,7 +89,7 @@ class Mask(object):
     def update_mask(self):
         for name, p in self.params.items():
             pdata = p.data().reshape(p.data().shape[0], -1)
-            num_pruned = int(pdata.shape[0] * self.ratio)
+            num_pruned = int(pdata.shape[0] * self.rate)
             norm = mx.nd.norm(pdata, ord=2, axis=1)
             indices_to_be_pruned = mx.nd.argsort(norm)[:num_pruned]
             self.mask[name] = mx.nd.ones_like(self.mask[name])
@@ -137,14 +138,8 @@ def main():
     optimizer = 'nag'
 
     save_period = opt.save_period
-    if opt.save_dir and save_period:
-        save_dir = opt.save_dir
-        makedirs(save_dir)
-    else:
-        save_dir = ''
-        save_period = 0
     
-    tfboard_writer = SummaryWriter(save_dir)
+    tfboard_writer = SummaryWriter(opt.save_dir)
 
     logger.info(opt)
 
@@ -176,9 +171,9 @@ def main():
 
         # dummy forward to initiate parameters
         dummy_data = mx.nd.zeros((10, 3, 224, 224), ctx=ctx[0])
-        _ = net(dummy_data)
+        net(dummy_data)
         # mask for pruning
-        mask = Mask(conv_params, ratio=opt.pruning_rate)
+        mask = Mask(conv_params, rate=opt.pruning_rate)
         mask.update_mask()
         mask.forward_mask()
 
@@ -246,29 +241,29 @@ def main():
 
             if val_acc > best_val_score:
                 best_val_score = val_acc
-                net.save_parameters('%s/%.4f-cifar-%s-%d-best.params'%(save_dir, best_val_score, model_name, epoch))
+                net.save_parameters('%s/%.4f-cifar-%s-%d-best.params'%(opt.save_dir, best_val_score, model_name, epoch))
 
             name, val_acc = test(ctx, val_data)
-            logger.info('[Epoch %d] train=%.5f val(before=%.5f, after=%.5f, best=%.5f) loss=%.3f time: %.1f' %
-                (epoch, acc, val_acc_before, val_acc, best_val_score, train_loss, time.time()-tic))
-            
-            # for k, v in conv_params.items():
-            #     np_data = v.data().asnumpy()
-            #     np_grad = v.grad().asnumpy()
-            #     logger.info("Param name: %s, data-mean: %.5f, data-std: %.5f, grad-mean: %.5f, grad-std: %.5f" % (
-            #         k, np_data.mean(), np_data.std(), np_grad.mean(), np_grad.std()
-            #     ))
+            logger.info("[{}/{}] Train acc {:<5} loss {:<5} LR {:}. Test acc {:}/{:}/{:}.".format(
+                epoch, epochs,
+                "{:.3f}".format(acc * 100),
+                "{:.3f}".format(train_loss),
+                "{:.4f}".format(trainer.learning_rate),
+                "{:.3f}".format(val_acc_before * 100),
+                "{:.3f}".format(val_acc * 100),
+                "{:.3f}".format(best_val_score * 100),
+            ))
 
             tfboard_writer.add_scalar('train/acc', acc, epoch)
             tfboard_writer.add_scalar('train/loss', train_loss, epoch)
             tfboard_writer.add_scalar('train/lr', trainer.learning_rate, epoch)
             tfboard_writer.add_scalar('val/acc', val_acc, epoch)
 
-            if save_period and save_dir and (epoch + 1) % save_period == 0:
-                net.save_parameters('%s/cifar10-%s-%d.params'%(save_dir, model_name, epoch))
+            if save_period and opt.save_dir and (epoch + 1) % save_period == 0:
+                net.save_parameters('%s/cifar10-%s-%d.params'%(opt.save_dir, model_name, epoch))
 
-        if save_period and save_dir:
-            net.save_parameters('%s/cifar10-%s-%d.params'%(save_dir, model_name, epochs-1))
+        if save_period and opt.save_dir:
+            net.save_parameters('%s/cifar10-%s-%d.params'%(opt.save_dir, model_name, epochs-1))
 
 
 
