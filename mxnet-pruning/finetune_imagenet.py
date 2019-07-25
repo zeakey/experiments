@@ -18,7 +18,7 @@ from os.path import join, split
 
 from mask import Mask
 from utils import Debugger
-
+from vltools.pytorch import AverageMeter
 # CLI
 def parse_args():
     parser = argparse.ArgumentParser(description='Train a model for image classification.')
@@ -114,6 +114,7 @@ def parse_args():
     parser.add_argument('--prune-rate', type=float, default=0.3,
                         help='pruning rate, default is 0.3.')
     parser.add_argument('--prune-grad', action="store_true")
+    parser.add_argument('--prune-metric', type=str, default="mulcorr")
 
     opt = parser.parse_args()
     return opt
@@ -355,6 +356,9 @@ def main():
             for k, v in net.collect_params('.*beta|.*gamma|.*bias').items():
                 v.wd_mult = 0.0
 
+        data_time = AverageMeter()
+        batch_time = AverageMeter()
+
         err1, err5 = test(ctx, val_data)
         logger.info("Initial test: Acc1: %f, Acc5 %f." % (1-err1, 1-err5))
 
@@ -362,7 +366,7 @@ def main():
         dummy_data = mx.nd.zeros((10, 3, 224, 224), ctx=ctx[0])
         net(dummy_data)
         conv_params = dict(net.collect_params(".*conv*"))
-        mask = Mask(conv_params, rate=opt.prune_rate, context=context, metric="mulcorr")
+        mask = Mask(conv_params, rate=opt.prune_rate, context=context, metric=opt.prune_metric)
         mask.update_mask()
         mask.prune_param()
 
@@ -383,15 +387,17 @@ def main():
 
         best_val_score = 1
 
+        end = time.time()
         for epoch in range(opt.resume_epoch, opt.num_epochs):
             tic = time.time()
             if opt.use_rec:
                 train_data.reset()
             train_metric.reset()
-            btic = time.time()
 
             for i, batch in enumerate(train_data):
                 data, label = batch_fn(batch, ctx)
+
+                data_time.update(time.time()-end)
 
                 if opt.mixup:
                     lam = np.random.beta(opt.mixup_alpha, opt.mixup_alpha)
@@ -412,7 +418,6 @@ def main():
                 if distillation:
                     teacher_prob = [nd.softmax(teacher(X.astype(opt.dtype, copy=False)) / opt.temperature) \
                                     for X in data]
-
                 with ag.record():
                     outputs = [net(X.astype(opt.dtype, copy=False)) for X in data]
                     if distillation:
@@ -421,6 +426,7 @@ def main():
                                   p.astype('float32', copy=False)) for yhat, y, p in zip(outputs, label, teacher_prob)]
                     else:
                         loss = [L(yhat, y.astype(opt.dtype, copy=False)) for yhat, y in zip(outputs, label)]
+
                 for l in loss:
                     l.backward()
 
@@ -439,14 +445,19 @@ def main():
                         train_metric.update(hard_label, outputs)
                     else:
                         train_metric.update(label, outputs)
-                batch_loss = np.mean([l.mean().asscalar() for l in loss]) / batch_size
-                tfboard_writer.add_scalar('train/iter-loss', batch_loss, epoch*num_batches+i)
 
+                train_metric.update(label, outputs)
+                batch_loss = np.mean([l.mean().asscalar() for l in loss]) / batch_size
+
+                batch_time.update(time.time()-end)
+                end = time.time()
+
+                tfboard_writer.add_scalar('train/iter-loss', batch_loss, epoch*num_batches+i)
                 if opt.log_interval and not (i+1)%opt.log_interval:
                     train_metric_name, train_metric_score = train_metric.get()
-                    logger.info("Epoch[{:}/{:}] Batch[{:}/{:}] Samples/sec {:<5} Loss {:}, Acc {:<5} LR {:}".format(
+                    logger.info("Epoch[{:}/{:}] Batch[{:}/{:}] Batch time {:} Data time {:} Loss {:}, Acc {:<5} LR {:}".format(
                         epoch, opt.num_epochs, i, num_batches,
-                        "{:.0f}".format(batch_size*opt.log_interval/(time.time()-btic)),
+                        "{:.3f}".format(batch_time.avg), "{:.3f}".format(data_time.avg),
                         "{:.4f}".format(batch_loss), "{:.3f}".format(train_metric_score),
                         "{:.4f}".format(trainer.learning_rate)
                     ))
