@@ -177,7 +177,7 @@ def main():
         logger.info("Initial test Acc: %.5f" % val_acc_init)
 
         # mask for pruning
-        mask = Mask(conv_params, rate=opt.prune_rate, metric='mulcorr')
+        mask = Mask(conv_params, rate=opt.prune_rate, context=context, metric='mulcorr')
         mask.update_mask()
         mask.prune_param()
 
