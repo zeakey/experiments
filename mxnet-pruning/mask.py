@@ -3,7 +3,7 @@ import mxnet as mx
 import numpy as np
 
 class Mask(object):
-    def __init__(self, parameters, rate, metric="norm", debug=True):
+    def __init__(self, parameters, rate, context, metric="norm", debug=True):
         """
         parameters: dict containing parameters
         rate: pruning rate
@@ -12,18 +12,19 @@ class Mask(object):
         self.mask = {}
         self.params = parameters
         self.rate = rate
+        self.context = context
         self.metric = metric
         self.debug = debug
         self.pruned_indices = {}
 
         for name, p in self.params.items():
-            self.mask[name] = mx.nd.ones(p.data().shape[0], ctx=p.data().context)
+            self.mask[name] = mx.nd.ones(p.data(ctx=context[0]).shape[0], ctx=context[0])
     
     def update_mask(self):
         for idx, (name, p) in enumerate(self.params.items()):
             print("Updating mask %d of %d, kernel shape: %s" % (idx, len(self.params), str(p.shape)))
-            pdata = p.data()
-            pgrad = p.grad()
+            pdata = p.data(self.context[0])
+            pgrad = p.grad(self.context[0])
             N, C, H, W = pdata.shape
             pdata = pdata.reshape(pdata.shape[0], -1)
             pgrad = pdata.reshape(pgrad.shape[0], -1)
@@ -63,8 +64,8 @@ class Mask(object):
 
     def prune_param(self):
         for name, p in self.params.items():
-            N, C, H, W = p.data().shape
-            pdata = self.params[name].data()
+            pdata = self.params[name].data(self.context[0])
+            N, C, H, W = pdata.shape
 
             indices_to_be_pruned = np.where(self.mask[name].asnumpy()==0)[0].tolist()
             # indices_to_be_preserved = np.where(self.mask[name].asnumpy()==1)[0].tolist()
@@ -75,14 +76,12 @@ class Mask(object):
 
     def prune_grad(self):
         for name, p in self.params.items():
-            N, C, H, W = p.data().shape
-            pgrad = self.params[name].grad()
-
             indices_to_be_pruned = np.where(self.mask[name].asnumpy()==0)[0].tolist()
-            # indices_to_be_preserved = np.where(self.mask[name].asnumpy()==1)[0].tolist()
             num_pruned = len(indices_to_be_pruned)
             if num_pruned > 0:
-                pgrad[indices_to_be_pruned, :, :, :] = 0
+                for ctx in self.context:
+                    pgrad = self.params[name].grad(ctx=ctx)
+                    pgrad[indices_to_be_pruned, :, :, :] = 0
 
 def multiple_correlation(weight):
     N = weight.shape[0]
