@@ -113,6 +113,7 @@ def parse_args():
     #
     parser.add_argument('--prune-rate', type=float, default=0.3,
                         help='pruning rate, default is 0.3.')
+    parser.add_argument('--prune-grad', action="store_true")
 
     opt = parser.parse_args()
     return opt
@@ -355,7 +356,7 @@ def main():
                 v.wd_mult = 0.0
 
         err1, err5 = test(ctx, val_data)
-        logger.info("Initial test: Err1: %f, Err5 %f." % (err1, err5))
+        logger.info("Initial test: Acc1: %f, Acc5 %f." % (1-err1, 1-err5))
 
         # dummy forward to initiate parameters
         dummy_data = mx.nd.zeros((10, 3, 224, 224), ctx=ctx[0])
@@ -424,7 +425,8 @@ def main():
                     l.backward()
 
                 # zero grad of pruned parameters
-                mask.prune_grad()
+                if opt.prune_grad:
+                    mask.prune_grad()
 
                 trainer.step(batch_size)
 
@@ -442,10 +444,10 @@ def main():
 
                 if opt.log_interval and not (i+1)%opt.log_interval:
                     train_metric_name, train_metric_score = train_metric.get()
-                    logger.info("Epoch[{:}/{:}] Batch[{:}/{:<5}] Samples/sec {:<5} Loss {:}, Acc {:<5} LR {:}".format(
+                    logger.info("Epoch[{:}/{:}] Batch[{:}/{:}] Samples/sec {:<5} Loss {:}, Acc {:<5} LR {:}".format(
                         epoch, opt.num_epochs, i, num_batches,
-                        "{:.1f}".format(batch_size*opt.log_interval/(time.time()-btic)),
-                        "{:.4f}".format(batch_loss), "{:.3f}".format(train_metric_score*100),
+                        "{:.0f}".format(batch_size*opt.log_interval/(time.time()-btic)),
+                        "{:.4f}".format(batch_loss), "{:.3f}".format(train_metric_score),
                         "{:.4f}".format(trainer.learning_rate)
                     ))
 
@@ -460,8 +462,8 @@ def main():
 
             logger.info('[Epoch %d] training: %s=%f'%(epoch, train_metric_name, train_metric_score))
             logger.info('[Epoch %d] speed: %d samples/sec\ttime cost: %f'%(epoch, throughput, time.time()-tic))
-            logger.info('[Epoch %d] validation: err before %f/%f, after %f/%f'%(epoch, err_top1_before, err_top5_before,
-                        err_top1_val, err_top5_val))
+            logger.info('[Epoch %d] validation: acc1 %.5f/%.5f acc5 %.5f/%.5f'%(epoch, 1-err_top1_before, 1-err_top1_val,
+                        1-err_top5_before, 1-err_top5_val))
 
 
             tfboard_writer.add_scalar('val/epoch-acc1-before', 1-err_top1_before, epoch)
