@@ -10,6 +10,7 @@ from mxnet.gluon.data.vision import transforms
 
 from gluoncv.data import imagenet
 from gluoncv.model_zoo import get_model
+from gluoncv.model_zoo import model_store
 from gluoncv.utils import makedirs, LRSequential, LRScheduler
 
 from tensorboardX import SummaryWriter
@@ -56,8 +57,8 @@ def parse_args():
                         help='decay rate of learning rate. default is 0.1.')
     parser.add_argument('--lr-decay-period', type=int, default=0,
                         help='interval for periodic learning rate decays. default is 0 to disable.')
-    parser.add_argument('--lr-decay-epoch', type=str, default='40,60',
-                        help='epochs at which learning rate decays. default is 40,60.')
+    parser.add_argument('--lr-decay-epoch', type=str, default='30,60,90',
+                        help='epochs at which learning rate decays. default is 30,60,90.')
     parser.add_argument('--warmup-lr', type=float, default=0.0,
                         help='starting warmup learning rate. default is 0.0.')
     parser.add_argument('--warmup-epochs', type=int, default=5,
@@ -159,7 +160,7 @@ def main():
 
     model_name = opt.model
 
-    kwargs = {'ctx': context, 'pretrained': opt.use_pretrained, 'classes': classes}
+    kwargs = {'ctx': context, 'classes': classes}
     if opt.use_gn:
         from gluoncv.nn import GroupNorm
         kwargs['norm_layer'] = GroupNorm
@@ -177,6 +178,9 @@ def main():
         optimizer_params['multi_precision'] = True
 
     net = get_model(model_name, **kwargs)
+    if opt.use_pretrained:
+        net.load_parameters(model_store.get_model_file(model_name), ignore_extra=True, ctx=context)
+
     net.cast(opt.dtype)
     if opt.resume_params is not '':
         net.load_parameters(opt.resume_params, ctx = context)
@@ -453,6 +457,7 @@ def main():
                 end = time.time()
 
                 tfboard_writer.add_scalar('train/iter-loss', batch_loss, epoch*num_batches+i)
+                tfboard_writer.add_scalar('train/LR', trainer.learning_rate, epoch*num_batches+i)
                 if opt.log_interval and not (i+1)%opt.log_interval:
                     train_metric_name, train_metric_score = train_metric.get()
                     logger.info("Epoch[{:}/{:}] Batch[{:}/{:}] Batch time {:} Data time {:} Loss {:}, Acc {:<5} LR {:}".format(
