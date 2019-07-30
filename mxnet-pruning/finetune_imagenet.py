@@ -25,16 +25,9 @@ def parse_args():
     parser = argparse.ArgumentParser(description='Train a model for image classification.')
     parser.add_argument('--data-dir', type=str, default='~/.mxnet/datasets/imagenet',
                         help='training and validation pictures to use.')
-    parser.add_argument('--rec-train', type=str, default='/media/ssd0/ilsvrc12/rec/train.rec',
-                        help='the training data')
-    parser.add_argument('--rec-train-idx', type=str, default='/media/ssd0/ilsvrc12/rec/train.idx',
-                        help='the index of training data')
-    parser.add_argument('--rec-val', type=str, default='/media/ssd0/ilsvrc12/rec/val.rec',
-                        help='the validation data')
-    parser.add_argument('--rec-val-idx', type=str, default='/media/ssd0/ilsvrc12/rec/val.idx',
-                        help='the index of validation data')
     parser.add_argument('--use-rec', action='store_true',
                         help='use image record iter for data input. default is false.')
+    parser.add_argument('--rec-dir', type=str, default="/media/ssd0/ilsvrc12/rec/", help='rec dir.')
     parser.add_argument('--batch-size', type=int, default=256,
                         help='training batch size per device (CPU/GPU).')
     parser.add_argument('--dtype', type=str, default='float32',
@@ -295,9 +288,11 @@ def main():
         return train_data, val_data, batch_fn
 
     if opt.use_rec:
-        train_data, val_data, batch_fn = get_data_rec(opt.rec_train, opt.rec_train_idx,
-                                                    opt.rec_val, opt.rec_val_idx,
-                                                    batch_size, num_workers)
+        train_data, val_data, batch_fn = get_data_rec(join(opt.rec_dir, "train.rec"),
+                                                      join(opt.rec_dir, "train.idx"),
+                                                      join(opt.rec_dir, "val.rec"),
+                                                      join(opt.rec_dir, "val.idx"),
+                                                      batch_size, num_workers)
     else:
         train_data, val_data, batch_fn = get_data_loader(opt.data_dir, batch_size, num_workers)
 
@@ -464,7 +459,7 @@ def main():
                         epoch, opt.num_epochs, i, num_batches,
                         "{:.3f}".format(batch_time.avg), "{:.3f}".format(data_time.avg),
                         "{:.4f}".format(batch_loss), "{:.3f}".format(train_metric_score),
-                        "{:.4f}".format(trainer.learning_rate)
+                        "{:.6f}".format(trainer.learning_rate)
                     ))
 
                     btic = time.time()
