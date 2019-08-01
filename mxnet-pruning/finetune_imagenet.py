@@ -462,8 +462,6 @@ def main():
                         "{:.6f}".format(trainer.learning_rate)
                     ))
 
-                    btic = time.time()
-
             train_metric_name, train_metric_score = train_metric.get()
             throughput = int(batch_size * i /(time.time() - tic))
 
