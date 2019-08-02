@@ -497,6 +497,7 @@ def main():
         if distillation:
             teacher.hybridize(static_alloc=True, static_shape=True)
     train(context)
+    net.export(join(opt.tmp, model_name))
 
 if __name__ == '__main__':
     main()
