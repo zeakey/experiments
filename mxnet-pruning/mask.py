@@ -22,7 +22,7 @@ class Mask(object):
     
     def update_mask(self):
         for idx, (name, p) in enumerate(self.params.items()):
-            print("Updating mask %d of %d, kernel shape: %s" % (idx, len(self.params), str(p.shape)))
+            print("Updating mask %s (%d of %d), kernel shape: %s" % (name, idx+1, len(self.params), str(p.shape)))
             pdata = p.data(self.context[0])
             pgrad = p.grad(self.context[0])
             N, C, H, W = pdata.shape
