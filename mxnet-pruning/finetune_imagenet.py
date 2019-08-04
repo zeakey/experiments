@@ -15,7 +15,7 @@ from gluoncv.utils import makedirs, LRSequential, LRScheduler
 
 from tensorboardX import SummaryWriter
 from vltools import Logger
-from os.path import join, split
+from os.path import join, split, isfile, dirname
 
 from mask import Mask
 from utils import Debugger
@@ -366,7 +366,13 @@ def main():
         net(dummy_data)
         conv_params = dict(net.collect_params(".*conv*"))
         mask = Mask(conv_params, rate=opt.prune_rate, context=context, metric=opt.prune_metric)
-        mask.update_mask()
+        
+        metric_cache_file = "metrics/%s-%s.npy" % (model_name, opt.prune_metric)
+        os.makedirs(dirname(metric_cache_file), exist_ok=True)
+        mask_cache = mask.update_mask(metric_cache_file)
+        if not isfile(metric_cache_file):
+            np.save(metric_cache_file, mask_cache)
+            logger.info("Saving cached metrics to %s" % metric_cache_file)
         mask.prune_param()
 
         trainer = gluon.Trainer(net.collect_params(), optimizer, optimizer_params)

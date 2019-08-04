@@ -1,6 +1,7 @@
 import torch
 import mxnet as mx
 import numpy as np
+from os.path import join, split, isfile
 
 class Mask(object):
     def __init__(self, parameters, rate, context, metric="norm", debug=True):
@@ -20,7 +21,17 @@ class Mask(object):
         for name, p in self.params.items():
             self.mask[name] = mx.nd.ones(p.data(ctx=context[0]).shape[0], ctx=context[0])
     
-    def update_mask(self):
+    def update_mask(self, metric_cache):
+        resume = False
+        if isfile(metric_cache):
+            # a dict contains "layer name: mask array"
+            metric_cache = np.load(metric_cache).item()
+            resume = True
+        else:
+            resume = False
+            metric_cache = {}
+
+        
         for idx, (name, p) in enumerate(self.params.items()):
             print("Updating mask %s (%d of %d), kernel shape: %s" % (name, idx+1, len(self.params), str(p.shape)))
             pdata = p.data(self.context[0])
@@ -33,27 +44,34 @@ class Mask(object):
             norm = mx.nd.norm(pdata, ord=2, axis=1)
             metric = np.zeros((N,), dtype=np.float32)
 
-            if N > D or self.metric == "norm":
-                metric = norm.asnumpy()
-            
-            elif self.metric == "mulcorr":
-                npdata = pdata.asnumpy()
-                rank = np.linalg.matrix_rank(npdata)
-                useless_idx = []
-                useful_idx = []
-                for i in range(N):
-                    idx1 = [True]*N
-                    idx1[i] = False
-                    npdata1 = npdata[idx1, :]
-                    rank1 = np.linalg.matrix_rank(npdata1)
-                    if rank1 == rank:
-                        useless_idx.append(i)
-                    else:
-                        useful_idx.append(i)
-                assert np.linalg.matrix_rank(npdata[useful_idx]) == len(useful_idx)
-                mulcorr = multiple_correlation_torch(npdata[useful_idx, :])
-                assert not np.any(np.isnan(mulcorr))
-                metric[useful_idx] = 1 - mulcorr
+            if resume:
+                metric = metric_cache[name]
+            else:
+                if N > D or self.metric == "norm":
+                    metric = norm.asnumpy()
+                
+                elif self.metric == "mulcorr":
+                    npdata = pdata.asnumpy()
+                    rank = np.linalg.matrix_rank(npdata)
+                    useless_idx = []
+                    useful_idx = []
+                    for i in range(N):
+                        idx1 = [True]*N
+                        idx1[i] = False
+                        npdata1 = npdata[idx1, :]
+                        rank1 = np.linalg.matrix_rank(npdata1)
+                        if rank1 == rank:
+                            useless_idx.append(i)
+                        else:
+                            useful_idx.append(i)
+                    assert np.linalg.matrix_rank(npdata[useful_idx]) == len(useful_idx)
+                    mulcorr = multiple_correlation_torch(npdata[useful_idx, :])
+
+                    assert not np.any(np.isnan(mulcorr))
+                    metric[useful_idx] = 1 - mulcorr
+
+            if not resume:
+                metric_cache[name] = metric
 
             indices_to_be_pruned = np.argsort(metric)[:num_pruned]
             self.pruned_indices[name] = indices_to_be_pruned.astype(int).tolist()
@@ -61,6 +79,8 @@ class Mask(object):
             self.mask[name] = mx.nd.ones_like(self.mask[name])
             if len(indices_to_be_pruned) > 0:
                 self.mask[name][indices_to_be_pruned] = 0
+
+        return metric_cache
 
     def prune_param(self):
         for name, p in self.params.items():
