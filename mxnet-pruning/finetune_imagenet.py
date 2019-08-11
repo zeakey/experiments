@@ -371,7 +371,7 @@ def main():
         os.makedirs(dirname(metric_cache_file), exist_ok=True)
         mask_cache = mask.update_mask(metric_cache_file)
         if not isfile(metric_cache_file):
-            np.save(metric_cache_file, mask_cache)
+            np.save(metric_cache_file, mask_cache, allow_pickle=True)
             logger.info("Saving cached metrics to %s" % metric_cache_file)
         mask.prune_param()
 
@@ -503,7 +503,7 @@ def main():
         if distillation:
             teacher.hybridize(static_alloc=True, static_shape=True)
     train(context)
-    net.export(join(opt.tmp, model_name), epoch=opt.num_epochs)
+    net.export(join(opt.save_dir, model_name), epoch=opt.num_epochs)
 
 if __name__ == '__main__':
     main()
