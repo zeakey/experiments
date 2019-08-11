@@ -24,7 +24,7 @@ class Mask(object):
     def update_mask(self, metric_cache):
         resume = False
         if isfile(metric_cache):
-            # a dict contains "layer name: mask array"
+            print("Recovering mask from %s"%metric_cache)
             metric_cache = np.load(metric_cache).item()
             resume = True
         else:
