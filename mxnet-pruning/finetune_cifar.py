@@ -15,10 +15,12 @@ from gluoncv.model_zoo import get_model
 from gluoncv.utils import makedirs, TrainingHistory
 from gluoncv.data import transforms as gcv_transforms
 from gluoncv.utils import makedirs, LRSequential, LRScheduler
+from gluoncv.model_zoo import model_store
 
 from tensorboardX import SummaryWriter
 from vltools import Logger
 from os.path import join, split
+from os.path import join, split, isfile, dirname
 
 from mask import Mask
 from utils import Debugger
@@ -71,6 +73,7 @@ def parse_args():
     parser.add_argument('--prune-inter', type=int, default=1,
                         help='filter pruning interval.')
     parser.add_argument('--prune-grad', action="store_true")
+    parser.add_argument('--prune-metric', type=str, default="mulcorr")
     parser.add_argument('--debug', action="store_true", help='use debug mode')
     opt = parser.parse_args()
     return opt
@@ -116,8 +119,8 @@ def main():
                 'drop_rate': opt.drop_rate}
     else:
         kwargs = {'classes': classes}
-    kwargs["pretrained"] = True
     net = get_model(model_name, **kwargs)
+    net.load_parameters(model_store.get_model_file(model_name), ignore_extra=True, ctx=context)
 
     # for data and gradient mask
     conv_params = dict(net.collect_params(".*conv*"))
@@ -170,15 +173,18 @@ def main():
         # dummy forward to initiate parameters
         dummy_data = mx.nd.zeros((10, 3, 224, 224), ctx=ctx[0])
         net(dummy_data)
-        # debugger
-        debugger = Debugger(net, logger)
 
         _, val_acc_init = test(ctx, val_data)
         logger.info("Initial test Acc: %.5f" % val_acc_init)
 
         # mask for pruning
         mask = Mask(conv_params, rate=opt.prune_rate, context=context, metric='mulcorr')
-        mask.update_mask()
+        metric_cache_file = "metrics/%s-%s.npy" % (model_name, opt.prune_metric)
+        os.makedirs(dirname(metric_cache_file), exist_ok=True)
+        mask_cache = mask.update_mask(metric_cache_file)
+        if not isfile(metric_cache_file):
+            np.save(metric_cache_file, mask_cache, allow_pickle=True)
+            logger.info("Saving cached metrics to %s" % metric_cache_file)
         mask.prune_param()
 
         trainer = gluon.Trainer(net.collect_params(), optimizer,
