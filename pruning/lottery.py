@@ -52,12 +52,14 @@ parser.add_argument('--randseed', type=int, help='random seed', default=None)
 parser.add_argument('--retrain', action="store_true")
 args = parser.parse_args()
 
+milestones = [100, 150, 180]
+
 if args.randseed == None:
     args.randseed = np.random.randint(1000)
 args.tmp = args.tmp.strip("/")
 args.tmp = args.tmp+"-seed%d"%args.randseed
 
-# Fix random seed for reproducibility
+# Random seed
 # According to https://pytorch.org/docs/master/notes/randomness.html
 np.random.seed(args.randseed)
 torch.manual_seed(args.randseed)
@@ -69,30 +71,7 @@ THIS_DIR = abspath(dirname(__file__))
 os.makedirs(args.tmp, exist_ok=True)
 
 tfboard_writer = writer = SummaryWriter(log_dir=args.tmp)
-
 logger = Logger(join(args.tmp, "log.txt"))
-
-# model and optimizer
-model = vgg_cifar.vgg16_bn(num_classes=100).cuda()
-optimizer = torch.optim.SGD(
-    model.parameters(),
-    lr=args.lr,
-    momentum=args.momentum,
-    weight_decay=args.weight_decay
-)
-
-logger.info("Model details:")
-logger.info(model)
-logger.info("Optimizer details:")
-logger.info(optimizer)
-
-logger.info("Initial parameters details:")
-for name, p in model.named_parameters():
-    logger.info("%s, shape=%s, std=%f, mean=%f" % (name, str(p.shape), p.std().item(), p.mean().item()))
-
-scheduler = lr_scheduler.MultiStepLR(optimizer,
-                      milestones=[100, 150, 180],
-                      gamma=0.1)
 
 # loss function
 criterion = torch.nn.CrossEntropyLoss()
@@ -101,6 +80,24 @@ def main():
 
     logger.info(args)
     train_loader, val_loader = vlpytorch.datasets.cifar100(abspath("/home/kai/.torch/data"), bs=args.bs)
+
+    # model and optimizer
+    model = vgg_cifar.vgg16_bn(num_classes=100).cuda()
+    optimizer = torch.optim.SGD(
+        model.parameters(),
+        lr=args.lr,
+        momentum=args.momentum,
+        weight_decay=args.weight_decay
+    )
+
+    logger.info("Model details:")
+    logger.info(model)
+    logger.info("Optimizer details:")
+    logger.info(optimizer)
+
+    logger.info("Initial parameters details:")
+    for name, p in model.named_parameters():
+        logger.info("%s, shape=%s, std=%f, mean=%f" % (name, str(p.shape), p.std().item(), p.mean().item()))
 
     # records
     best_acc1 = 0
@@ -126,11 +123,15 @@ def main():
         else:
             logger.info("=> no checkpoint found at '{}'".format(args.resume))
 
+    scheduler = lr_scheduler.MultiStepLR(optimizer,
+                      milestones=milestones,
+                      gamma=0.1)
+
     for epoch in range(args.start_epoch, args.epochs):
 
         # train and evaluate
         loss = train(train_loader, model, optimizer, epoch)
-        acc1, acc5 = validate(val_loader, epoch)
+        acc1, acc5 = validate(val_loader, model, epoch)
         scheduler.step()
 
         lr = optimizer.param_groups[0]["lr"]
@@ -173,7 +174,7 @@ def main():
 
     # evaluate before pruning
     logger.info("evaluating before pruning...")
-    validate(val_loader, args.epochs)
+    validate(val_loader, model, args.epochs)
 
     bnfactors = []
     for m in model.modules():
@@ -195,7 +196,7 @@ def main():
         m.bias.data[1-prune_mask[name]] = 0
 
     logger.info("evaluating after masking...")
-    validate(val_loader, args.epochs)
+    validate(val_loader, model, args.epochs)
 
     # resume initial weights
     init_weights = torch.load(join(args.tmp, "initial-weights.pth"))
@@ -230,28 +231,31 @@ def main():
         next_conv.weight.data = next_conv.weight.data[:, mask]
 
     logger.info("evaluating after real pruning...")
-    validate(val_loader, args.epochs)
+    validate(val_loader, model, args.epochs)
 
     if args.retrain:
 
-        optimizer_retrain = torch.optim.SGD(
+        optimizer = torch.optim.SGD(
             model.parameters(),
             lr=args.lr,
             momentum=args.momentum,
             weight_decay=args.weight_decay
         )
+        scheduler = lr_scheduler.MultiStepLR(optimizer,
+                      milestones=milestones,
+                      gamma=0.1)
         best_acc1 = 0
         for epoch in range(0, args.epochs):
 
             # train and evaluate
-            loss = train(train_loader, model, optimizer_retrain, epoch)
-            acc1, acc5 = validate(val_loader, epoch)
+            loss = train(train_loader, model, optimizer, epoch)
+            acc1, acc5 = validate(val_loader, model, epoch)
             scheduler.step()
 
             lr = optimizer.param_groups[0]["lr"]
 
             tfboard_writer.add_scalar('retrain0/loss_epoch', loss, epoch)
-            tfboard_writer.add_scalar('retrain/lr_epoch', lr, epoch)
+            tfboard_writer.add_scalar('retrain0/lr_epoch', lr, epoch)
 
             tfboard_writer.add_scalar('retest0/acc1_epoch', acc1, epoch)
             tfboard_writer.add_scalar('retest0/acc5_epoch', acc5, epoch)
@@ -280,6 +284,12 @@ def main():
                 }, is_best, path=args.tmp, filename="checkpoint-retrain0.pth")
 
         # reinitiate parameters and retrain
+        optimizer = torch.optim.SGD(
+            model.parameters(),
+            lr=args.lr,
+            momentum=args.momentum,
+            weight_decay=args.weight_decay
+        )
         for m in model.modules():
             if isinstance(m, nn.Conv2d):
                 nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
@@ -295,8 +305,8 @@ def main():
         for epoch in range(0, args.epochs):
 
             # train and evaluate
-            loss = train(train_loader, model, optimizer_retrain, epoch)
-            acc1, acc5 = validate(val_loader, epoch)
+            loss = train(train_loader, model, optimizer, epoch)
+            acc1, acc5 = validate(val_loader, model, epoch)
             scheduler.step()
 
             lr = optimizer.param_groups[0]["lr"]
@@ -383,7 +393,7 @@ def train(train_loader, model, optimizer, epoch):
 
     return losses.avg
 
-def validate(val_loader, epoch):
+def validate(val_loader, model, epoch):
     batch_time = AverageMeter()
     losses = AverageMeter()
     top1 = AverageMeter()
