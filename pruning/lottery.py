@@ -70,14 +70,15 @@ torch.backends.cudnn.benchmark = False
 THIS_DIR = abspath(dirname(__file__))
 os.makedirs(args.tmp, exist_ok=True)
 
-tfboard_writer = writer = SummaryWriter(log_dir=args.tmp)
-logger = Logger(join(args.tmp, "log.txt"))
-
 # loss function
 criterion = torch.nn.CrossEntropyLoss()
 
+tfboard_writer = writer = SummaryWriter(log_dir=args.tmp)
+logger = Logger(join(args.tmp, "log.txt"))
+
 def main():
 
+    global logger
     logger.info(args)
     train_loader, val_loader = vlpytorch.datasets.cifar100(abspath("/home/kai/.torch/data"), bs=args.bs)
 
@@ -234,7 +235,13 @@ def main():
     validate(val_loader, model, args.epochs)
 
     if args.retrain:
-
+        logger = Logger(join(args.tmp, "log_retrain.txt"))
+        logger.info("Starting retraining with original random initiation:")
+        logger.info("Parameters after real pruning")
+        for name, p in model.named_parameters():
+            logger.info("%s, shape=%s, std=%f, mean=%f" % \
+                    (name, str(p.shape), p.std().item(), p.mean().item()))
+    
         optimizer = torch.optim.SGD(
             model.parameters(),
             lr=args.lr,
@@ -283,6 +290,7 @@ def main():
                 'optimizer' : optimizer.state_dict()
                 }, is_best, path=args.tmp, filename="checkpoint-retrain0.pth")
 
+
         # reinitiate parameters and retrain
         optimizer = torch.optim.SGD(
             model.parameters(),
@@ -290,6 +298,9 @@ def main():
             momentum=args.momentum,
             weight_decay=args.weight_decay
         )
+        scheduler = lr_scheduler.MultiStepLR(optimizer,
+                      milestones=milestones,
+                      gamma=0.1)
         for m in model.modules():
             if isinstance(m, nn.Conv2d):
                 nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
@@ -301,6 +312,12 @@ def main():
             elif isinstance(m, nn.Linear):
                 nn.init.normal_(m.weight, 0, 0.01)
                 nn.init.constant_(m.bias, 0)
+
+        logger.info("Starting retraining with reinitiation:")
+        logger.info("Parameters after reinitiation")
+        for name, p in model.named_parameters():
+            logger.info("%s, shape=%s, std=%f, mean=%f" % \
+                    (name, str(p.shape), p.std().item(), p.mean().item()))
         best_acc1 = 0
         for epoch in range(0, args.epochs):
 
@@ -410,8 +427,6 @@ def validate(val_loader, model, epoch):
             # compute output
             output = model(data)
             loss = criterion(output, target)
-
-            tfboard_writer.add_scalar('test/loss_iter', loss.item(), epoch * len(val_loader)  + i)
             
             # measure accuracy and record loss
             acc1, acc5 = accuracy(output, target, topk=(1, 5))
