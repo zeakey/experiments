@@ -1,7 +1,7 @@
 # https://github.com/NVIDIA/DALI/blob/master/docs/examples/pytorch/resnet50/main.py
 import torch, torchvision
 import torch.nn as nn
-import torchvision
+import torchvision, cv2
 # logger and auxliaries
 import numpy as np
 import os, sys, argparse, time, shutil
@@ -30,7 +30,7 @@ warnings.filterwarnings("ignore", "(Possibly )?corrupt EXIF data", UserWarning)
 parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                     help='manual epoch number (useful on restarts)')
-parser.add_argument('--print-freq', default=50, type=int,
+parser.add_argument('--print-freq', default=100, type=int,
                     metavar='N', help='print frequency (default: 10)')
 # data
 parser.add_argument('--use-rec', action="store_true")
@@ -307,6 +307,7 @@ def train(train_loader, model, optimizer, lrscheduler, epoch):
 
         if args.local_rank == 0 and i % args.print_freq == 0:
             tfboard_writer.add_scalar("train/iter-lr", lr, epoch*train_loader_len+i)
+            tfboard_writer.add_scalar("train/iter-loss", losses.val, epoch*train_loader_len+i)
             logger.info('Epoch[{0}/{1}] Iter[{2}/{3}]\t'
                   'Batch Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
                   'Data Time {data_time.val:.3f} ({data_time.avg:.3f})\t'
@@ -318,14 +319,18 @@ def train(train_loader, model, optimizer, lrscheduler, epoch):
                    batch_time=batch_time, data_time=data_time, loss=losses, top1=top1, top5=top5,
                    lr=lr))
 
-        if i%1000 == 0:
-            norm = torch.norm(output, p=2, dim=1)
+        if args.local_rank == 0 and i % 1000 == 0:
+            norm = torch.norm(output, p=2, dim=1).detach()
             _, norm_sort = torch.sort(norm)
             selected = torch.cat((norm_sort[0:8], norm_sort[-8::]))
             selected = data[selected,].cpu().detach()
+            selected = torchvision.utils.make_grid(selected, normalize=True)
+            tfboard_writer.add_image("train/image", selected, epoch*train_loader_len+i)
+            tfboard_writer.add_histogram('train/feature-norm', norm.cpu().numpy(), epoch*train_loader_len+i)
+            selected = selected.numpy().transpose((1,2,0))
             save_path = join(args.tmp, "images", "epoch%d-iter%d.jpg"%(epoch, i))
             os.makedirs(dirname(save_path), exist_ok=True)
-            torchvision.utils.save_image(selected, filename=save_path, normalize=True)
+            cv2.imwrite(save_path, selected)
 
     train_loader.reset()
 
