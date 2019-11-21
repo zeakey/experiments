@@ -11,6 +11,7 @@ from vltools.pytorch import save_checkpoint, AverageMeter, accuracy
 import vltools.pytorch as vlpytorch
 from vltools.tcm.lr import CosAnnealingLR, MultiStepLR
 from vltools import image as vlimage
+from vltools import imagenet_labels
 # DALI data reader
 from nvidia.dali.pipeline import Pipeline
 import nvidia.dali.ops as ops
@@ -23,6 +24,10 @@ from apex.parallel import DistributedDataParallel as DDP
 from apex.fp16_utils import FP16_Optimizer, network_to_half
 
 from tensorboardX import SummaryWriter
+import matplotlib
+matplotlib.use("agg")
+import matplotlib.pyplot as plt
+from PIL import Image, ImageFont, ImageDraw
 
 import warnings
 warnings.filterwarnings("ignore", "(Possibly )?corrupt EXIF data", UserWarning)
@@ -320,17 +325,64 @@ def train(train_loader, model, optimizer, lrscheduler, epoch):
                    lr=lr))
 
         if args.local_rank == 0 and i % 1000 == 0:
+            N = 16
+
             norm = torch.norm(output, p=2, dim=1).detach()
+            loss = torch.nn.functional.cross_entropy(output.detach(), target, reduction="none")
+            _, predict = torch.max(output, dim=1)
+            probability = torch.nn.functional.softmax(output, dim=1)
+
             _, norm_sort = torch.sort(norm)
-            selected = torch.cat((norm_sort[0:8], norm_sort[-8::]))
-            selected = data[selected,].cpu().detach()
-            selected = torchvision.utils.make_grid(selected, normalize=True)
-            tfboard_writer.add_image("train/image", selected, epoch*train_loader_len+i)
-            tfboard_writer.add_histogram('train/feature-norm', norm.cpu().numpy(), epoch*train_loader_len+i)
+            _, loss_sort = torch.sort(loss)
+
+            selected_idx = torch.cat((norm_sort[0:N], norm_sort[-N::], loss_sort[0:N], loss_sort[-N::]))
+            selected = data[selected_idx,].cpu().detach().numpy()
+            for idx in range(selected.shape[0]):
+                im1 = np.squeeze(selected[idx,]).transpose((1,2,0))
+                im1 = vlimage.norm255(im1)
+                im1 = Image.fromarray(im1)
+                draw = ImageDraw.Draw(im1)
+                font = ImageFont.truetype("Roboto-Regular.ttf", 16)
+
+                idx1 = selected_idx[idx]
+                pred = int(predict[idx1])
+                tgt = int(target[idx1])
+                prob1 = probability[idx1, pred]
+                prob2 = probability[idx1, tgt]
+
+                x, y = 2, 10
+                draw.text((x, y), "loss:%.4f"%loss[idx1], (0,0,255), font=font); y += 25
+                draw.text((x, y), "norm:%.4f"%norm[idx1], (0,0,255), font=font); y += 25
+                draw.text((x, y), "pred:%d/%.5f"%(pred, prob1), (0,0,255), font=font); y += 25
+                draw.text((x, y), imagenet_labels[pred], (0,0,255), font=font); y += 25
+                draw.text((x, y), "target:%d/%.5f"%(tgt, prob2), (0,0,255), font=font); y += 25
+                draw.text((x, y), imagenet_labels[tgt], (0,0,255), font=font); y += 25
+
+                im1 = np.array(im1).transpose((2,0,1))
+                selected[idx,] = im1
+            selected = torch.from_numpy(selected)
+            selected = torchvision.utils.make_grid(selected, nrow=N, normalize=True)
+            tfboard_writer.add_image("train/images", selected, epoch*train_loader_len+i)
+            tfboard_writer.add_histogram('train/norm', norm.cpu().numpy(), epoch*train_loader_len+i)
+            tfboard_writer.add_histogram('train/loss', loss.cpu().numpy(), epoch*train_loader_len+i)
             selected = selected.numpy().transpose((1,2,0))
-            save_path = join(args.tmp, "images", "epoch%d-iter%d.jpg"%(epoch, i))
+            selected = vlimage.norm255(selected)
+            save_path = join(args.tmp, "images/train", "epoch%d-iter%d.jpg"%(epoch, i))
             os.makedirs(dirname(save_path), exist_ok=True)
             cv2.imwrite(save_path, selected)
+
+            # draw loss-norm scatter figure
+            loss = loss.cpu().numpy(); norm = norm.cpu().numpy()
+            fig, ax = plt.subplots(1, 1)
+            ax.scatter(loss, norm)
+            ax.set_xlabel("loss")
+            ax.set_ylabel("norm")
+            ax.set_title("feature norm v.s. loss value")
+            plt.tight_layout()
+            save_path = join(args.tmp, "images/norm-loss", "epoch%d-iter%d.jpg"%(epoch, i))
+            os.makedirs(dirname(save_path), exist_ok=True)
+            plt.savefig(save_path)
+            plt.close(fig)
 
     train_loader.reset()
 
