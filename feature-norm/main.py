@@ -29,6 +29,8 @@ matplotlib.use("agg")
 import matplotlib.pyplot as plt
 from PIL import Image, ImageFont, ImageDraw
 
+import resnet
+
 import warnings
 warnings.filterwarnings("ignore", "(Possibly )?corrupt EXIF data", UserWarning)
 
@@ -126,7 +128,7 @@ class HybridValPipe(Pipeline):
         super(HybridValPipe, self).__init__(batch_size, num_threads, device_id, seed=12 + device_id)
         if args.use_rec:
             self.input = ops.MXNetReader(path=join(data_dir, "val.rec"), index_path=join(data_dir, "val.idx"),
-                                     random_shuffle=True, shard_id=args.local_rank, num_shards=args.world_size)
+                                     random_shuffle=False, shard_id=args.local_rank, num_shards=args.world_size)
         else:
             self.input = ops.FileReader(file_root=data_dir, shard_id=args.local_rank, num_shards=args.world_size, random_shuffle=False)
         self.decode = ops.ImageDecoder(device="mixed", output_type=types.RGB)
@@ -187,7 +189,7 @@ def main():
     train_loader_len = int(train_loader._size / args.batch_size)
 
     # model and optimizer
-    model = torchvision.models.resnet.resnet50().cuda()
+    model = resnet.resnet50().cuda()
 
     if args.fp16:
         model = network_to_half(model)
@@ -277,7 +279,7 @@ def train(train_loader, model, optimizer, lrscheduler, epoch):
         # measure data loading time
         data_time.update(time.time() - end)
 
-        output = model(data)
+        output, feature = model(data)
         loss = criterion(output, target)
 
         acc1, acc5 = accuracy(output, target, topk=(1, 5))
@@ -327,7 +329,7 @@ def train(train_loader, model, optimizer, lrscheduler, epoch):
         if args.local_rank == 0 and i % 1000 == 0:
             N = 16
 
-            norm = torch.norm(output, p=2, dim=1).detach()
+            norm = torch.norm(feature, p=2, dim=1)
             loss = torch.nn.functional.cross_entropy(output.detach(), target, reduction="none")
             _, predict = torch.max(output, dim=1)
             probability = torch.nn.functional.softmax(output, dim=1)
