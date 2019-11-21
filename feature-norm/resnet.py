@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 from torchvision.models.utils import load_state_dict_from_url
 from torch.nn import init
+from torch.nn.parameter import Parameter
 import torch.nn.functional as F
 import math
 
@@ -118,11 +119,11 @@ class Bottleneck(nn.Module):
 
         return out
 
-normed_linear = False
+normed_linear = True
 
-class NormedLinear():
+class NormedLinear(nn.Module):
     def __init__(self, in_features, out_features):
-        super(Linear, self).__init__()
+        super(NormedLinear, self).__init__()
         self.in_features = in_features
         self.out_features = out_features
         self.weight = Parameter(torch.Tensor(out_features, in_features))
@@ -231,7 +232,8 @@ class ResNet(nn.Module):
         feature = x.detach()
 
         if normed_linear:
-            x = F.normalize(x, p=2, dim=1) * 80
+            x = F.normalize(x, p=2, dim=1) * 70
+
         x = self.fc(x)
 
         if self.training:
