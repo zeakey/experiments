@@ -342,7 +342,7 @@ def train(train_loader, model, optimizer, lrscheduler, epoch):
                 im1 = vlimage.norm255(im1)
                 im1 = Image.fromarray(im1)
                 draw = ImageDraw.Draw(im1)
-                font = ImageFont.truetype("Roboto-Regular.ttf", 16)
+                font = ImageFont.truetype("/usr/share/fonts/truetype/freefont/FreeSans.ttf", 18)
 
                 idx1 = selected_idx[idx]
                 pred = int(predict[idx1])
