@@ -1,7 +1,9 @@
 import torch
 import torch.nn as nn
 from torchvision.models.utils import load_state_dict_from_url
-
+from torch.nn import init
+import torch.nn.functional as F
+import math
 
 __all__ = ['ResNet', 'resnet18', 'resnet34', 'resnet50', 'resnet101',
            'resnet152', 'resnext50_32x4d', 'resnext101_32x8d',
@@ -116,6 +118,21 @@ class Bottleneck(nn.Module):
 
         return out
 
+normed_linear = False
+
+class NormedLinear():
+    def __init__(self, in_features, out_features):
+        super(Linear, self).__init__()
+        self.in_features = in_features
+        self.out_features = out_features
+        self.weight = Parameter(torch.Tensor(out_features, in_features))
+
+        init.kaiming_uniform_(self.weight, a=math.sqrt(5))
+        self.weight.data = F.normalize(self.weight.data, p=2, dim=1)
+
+    def forward(self, input):
+        self.weight.data = F.normalize(self.weight.data)
+        return F.linear(input, self.weight, None)
 
 class ResNet(nn.Module):
 
@@ -151,7 +168,10 @@ class ResNet(nn.Module):
         self.layer4 = self._make_layer(block, 512, layers[3], stride=2,
                                        dilate=replace_stride_with_dilation[2])
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
-        self.fc = nn.Linear(512 * block.expansion, num_classes)
+        if normed_linear:
+            self.fc = NormedLinear(512 * block.expansion, num_classes)
+        else:
+            self.fc = nn.Linear(512 * block.expansion, num_classes)
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
@@ -210,6 +230,8 @@ class ResNet(nn.Module):
 
         feature = x.detach()
 
+        if normed_linear:
+            x = F.normalize(x, p=2, dim=1) * 80
         x = self.fc(x)
 
         if self.training:
