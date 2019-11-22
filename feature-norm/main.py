@@ -353,9 +353,9 @@ def train(train_loader, model, optimizer, lrscheduler, epoch):
                 prob2 = probability[idx1, tgt]
 
                 if pred == tgt:
-                    color = (255, 0, 0)
-                else:
                     color = (0, 0, 255)
+                else:
+                    color = (255, 0, 0)
                 x, y = 2, 10
                 draw.text((x, y), "loss:%.4f"%loss[idx1], color, font=font); y += 25
                 draw.text((x, y), "norm:%.4f"%norm[idx1], color, font=font); y += 25
