@@ -352,21 +352,26 @@ def train(train_loader, model, optimizer, lrscheduler, epoch):
                 prob1 = probability[idx1, pred]
                 prob2 = probability[idx1, tgt]
 
+                if pred == tgt:
+                    color = (255, 0, 0)
+                else:
+                    color = (0, 0, 255)
                 x, y = 2, 10
-                draw.text((x, y), "loss:%.4f"%loss[idx1], (0,0,255), font=font); y += 25
-                draw.text((x, y), "norm:%.4f"%norm[idx1], (0,0,255), font=font); y += 25
-                draw.text((x, y), "pred:%d/%.5f"%(pred, prob1), (0,0,255), font=font); y += 25
-                draw.text((x, y), imagenet_labels[pred], (0,0,255), font=font); y += 25
-                draw.text((x, y), "target:%d/%.5f"%(tgt, prob2), (0,0,255), font=font); y += 25
-                draw.text((x, y), imagenet_labels[tgt], (0,0,255), font=font); y += 25
+                draw.text((x, y), "loss:%.4f"%loss[idx1], color, font=font); y += 25
+                draw.text((x, y), "norm:%.4f"%norm[idx1], color, font=font); y += 25
+                draw.text((x, y), "pred:%d/%.5f"%(pred, prob1), color, font=font); y += 25
+                draw.text((x, y), imagenet_labels[pred], color, font=font); y += 25
+                draw.text((x, y), "target:%d/%.5f"%(tgt, prob2), color, font=font); y += 25
+                draw.text((x, y), imagenet_labels[tgt], color, font=font); y += 25
 
                 im1 = np.array(im1).transpose((2,0,1))
                 selected[idx,] = im1
             selected = torch.from_numpy(selected)
             selected = torchvision.utils.make_grid(selected, nrow=N, normalize=True)
             tfboard_writer.add_image("train/images", selected, epoch*train_loader_len+i)
-            tfboard_writer.add_histogram('train/norm', norm.cpu().numpy(), epoch*train_loader_len+i)
-            tfboard_writer.add_histogram('train/loss', loss.cpu().numpy(), epoch*train_loader_len+i)
+            tfboard_writer.add_histogram('train/norm-distr', norm.cpu().numpy(), epoch*train_loader_len+i)
+            tfboard_writer.add_histogram('train/loss-distr', loss.cpu().numpy(), epoch*train_loader_len+i)
+            tfboard_writer.add_scalar('train/norm', norm.cpu().numpy().mean(), epoch*train_loader_len+i)
             selected = selected.numpy().transpose((1,2,0))
             selected = vlimage.norm255(selected)
             save_path = join(args.tmp, "images/train", "epoch%d-iter%d.jpg"%(epoch, i))
