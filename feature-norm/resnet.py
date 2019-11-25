@@ -247,7 +247,7 @@ class ResNet(nn.Module):
         feature = x.detach()
 
         if self.normalize_feature:
-            x = F.normalize(x, p=2, dim=1) * 70
+            x = F.normalize(x, p=2, dim=1) * 30
 
         x = self.fc(x)
 
