@@ -119,8 +119,6 @@ class Bottleneck(nn.Module):
 
         return out
 
-normed_linear = True
-
 class NormedLinear(nn.Module):
     def __init__(self, in_features, out_features):
         super(NormedLinear, self).__init__()
@@ -137,10 +135,27 @@ class NormedLinear(nn.Module):
 
 class ResNet(nn.Module):
 
-    def __init__(self, block, layers, num_classes=1000, zero_init_residual=False,
+    def __init__(self, block, layers, num_classes=1000, normalization="none", zero_init_residual=False,
                  groups=1, width_per_group=64, replace_stride_with_dilation=None,
                  norm_layer=None):
         super(ResNet, self).__init__()
+
+        self.normalization = normalization
+        if normalization == "both":
+            self.normalize_feature = True
+            self.normalize_weight = True
+        elif normalization == "feature":
+            self.normalize_feature = True
+            self.normalize_weight = False
+        elif normalization == "weight":
+            self.normalize_feature = False
+            self.normalize_weight = True
+        elif normalization == "none":
+            self.normalize_feature = False
+            self.normalize_weight = False
+        else:
+            raise ValueError("?")
+
         if norm_layer is None:
             norm_layer = nn.BatchNorm2d
         self._norm_layer = norm_layer
@@ -169,7 +184,7 @@ class ResNet(nn.Module):
         self.layer4 = self._make_layer(block, 512, layers[3], stride=2,
                                        dilate=replace_stride_with_dilation[2])
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
-        if normed_linear:
+        if self.normalize_weight:
             self.fc = NormedLinear(512 * block.expansion, num_classes)
         else:
             self.fc = nn.Linear(512 * block.expansion, num_classes)
@@ -231,7 +246,7 @@ class ResNet(nn.Module):
 
         feature = x.detach()
 
-        if normed_linear:
+        if self.normalize_feature:
             x = F.normalize(x, p=2, dim=1) * 70
 
         x = self.fc(x)
