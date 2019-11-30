@@ -34,7 +34,7 @@ matplotlib.use("agg")
 import matplotlib.pyplot as plt
 from PIL import Image, ImageFont, ImageDraw
 
-from models import preresnet
+from models import preresnet, models
 
 import warnings
 warnings.filterwarnings("ignore", "(Possibly )?corrupt EXIF data", UserWarning)
@@ -190,7 +190,7 @@ def main():
     train_loader_len = int(train_loader._size / args.batch_size)
 
     # model and optimizer
-    model = preresnet.resnet50(num_classes=85742).cuda()
+    model = models.resnet50(num_classes=85742).cuda()
 
     if args.fp16:
         model = network_to_half(model)
@@ -274,7 +274,6 @@ def train(train_loader, model, optimizer, lrscheduler, epoch):
         data = data[0]["data"]
         data = data - 127.5
         data = data * 0.0078125
-        # print(data.mean(dim=(0,2,3)), data.std(dim=(0,2,3)))
 
         # measure data loading time
         data_time.update(time.time() - end)
@@ -313,17 +312,19 @@ def train(train_loader, model, optimizer, lrscheduler, epoch):
         lr = optimizer.param_groups[0]["lr"]
 
         if args.local_rank == 0 and i % args.print_freq == 0:
+
             tfboard_writer.add_scalar("train/iter-lr", lr, epoch*train_loader_len+i)
+            tfboard_writer.add_scalar("train/iter-acc1", top1.val, epoch*train_loader_len+i)
             tfboard_writer.add_scalar("train/iter-loss", losses.val, epoch*train_loader_len+i)
+
             logger.info('Epoch[{0}/{1}] Iter[{2}/{3}]\t'
-                  'Batch Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
-                  'Data Time {data_time.val:.3f} ({data_time.avg:.3f})\t'
+                  'BTime {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
+                  'DTime {data_time.val:.3f} ({data_time.avg:.3f})\t'
                   'Train Loss {loss.val:.3f} ({loss.avg:.3f})\t'
                   'Prec@1 {top1.val:.3f} ({top1.avg:.3f})\t'
-                  'Prec@5 {top5.val:.3f} ({top5.avg:.3f})\t'
                   'LR: {lr:.2E}'.format(
                    epoch, args.epochs, i, train_loader_len,
-                   batch_time=batch_time, data_time=data_time, loss=losses, top1=top1, top5=top5,
+                   batch_time=batch_time, data_time=data_time, loss=losses, top1=top1,
                    lr=lr))
 
         if args.local_rank == 0 and i % 1000 == 0:
@@ -339,33 +340,31 @@ def train(train_loader, model, optimizer, lrscheduler, epoch):
 
             selected_idx = torch.cat((norm_sort[0:N], norm_sort[-N::], loss_sort[0:N], loss_sort[-N::]))
             selected = data[selected_idx,].cpu().detach().numpy()
-            # for idx in range(selected.shape[0]):
-            #     im1 = np.squeeze(selected[idx,]).transpose((1,2,0))
-            #     im1 = vlimage.norm255(im1)
-            #     im1 = Image.fromarray(im1)
-            #     draw = ImageDraw.Draw(im1)
-            #     font = ImageFont.truetype("/usr/share/fonts/truetype/freefont/FreeSans.ttf", 18)
+            for idx in range(selected.shape[0]):
+                im1 = np.squeeze(selected[idx,]).transpose((1,2,0))
+                im1 = vlimage.norm255(im1)
+                im1 = Image.fromarray(im1)
+                draw = ImageDraw.Draw(im1)
+                font = ImageFont.truetype("FreeSans.ttf", 12)
 
-            #     idx1 = selected_idx[idx]
-            #     pred = int(predict[idx1])
-            #     tgt = int(target[idx1])
-            #     prob1 = probability[idx1, pred]
-            #     prob2 = probability[idx1, tgt]
+                idx1 = selected_idx[idx]
+                pred = int(predict[idx1])
+                tgt = int(target[idx1])
+                prob1 = probability[idx1, pred]
+                prob2 = probability[idx1, tgt]
 
-            #     if pred == tgt:
-            #         color = (0, 0, 255)
-            #     else:
-            #         color = (255, 0, 0)
-            #     x, y = 2, 10
-            #     draw.text((x, y), "loss:%.4f"%loss[idx1], color, font=font); y += 25
-            #     draw.text((x, y), "norm:%.4f"%norm[idx1], color, font=font); y += 25
-            #     draw.text((x, y), "pred:%d/%.5f"%(pred, prob1), color, font=font); y += 25
-            #     draw.text((x, y), imagenet_labels[pred], color, font=font); y += 25
-            #     draw.text((x, y), "target:%d/%.5f"%(tgt, prob2), color, font=font); y += 25
-            #     draw.text((x, y), imagenet_labels[tgt], color, font=font); y += 25
+                if pred == tgt:
+                    color = (0, 0, 255)
+                else:
+                    color = (255, 0, 0)
+                x, y = 2, 10
+                draw.text((x, y), "loss:%.4f"%loss[idx1], color, font=font); y += 25
+                draw.text((x, y), "norm:%.4f"%norm[idx1], color, font=font); y += 25
+                draw.text((x, y), "pred:%d/%.5f"%(pred, prob1), color, font=font); y += 25
+                draw.text((x, y), "target:%d/%.5f"%(tgt, prob2), color, font=font); y += 25
 
-            #     im1 = np.array(im1).transpose((2,0,1))
-            #     selected[idx,] = im1
+                im1 = np.array(im1).transpose((2,0,1))
+                selected[idx,] = im1
             selected = torch.from_numpy(selected)
             selected = torchvision.utils.make_grid(selected, nrow=N, normalize=True)
             tfboard_writer.add_image("train/images", selected, epoch*train_loader_len+i)
@@ -402,7 +401,7 @@ def test_lfw(model):
     data = data - 127.5
     data = data * 0.0078125
     # print(data.mean(dim=(0,2,3)), data.std(dim=(0,2,3)))
-    feature = np.zeros((12000, 2048), dtype=np.float32)
+    feature = np.zeros((12000, 512), dtype=np.float32)
     for i in range(0, 12000, 100):
         data1 = data[i:i+100,].cuda()
         output = model(data1)
