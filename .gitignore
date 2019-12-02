@@ -9,3 +9,7 @@ notebooks/*.html
 *.jpg
 *.png
 *.pth
+
+# mxnet record
+*.rec
+*.idx
