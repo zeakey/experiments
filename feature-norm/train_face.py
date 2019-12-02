@@ -280,7 +280,7 @@ def train(train_loader, model, optimizer, lrscheduler, epoch):
         # measure data loading time
         data_time.update(time.time() - end)
 
-        output, feature = model(data)#, label=target)
+        output, feature = model(data, label=target)
         loss = criterion(output, target)
 
         acc1, acc5 = accuracy(output, target, topk=(1, 5))
