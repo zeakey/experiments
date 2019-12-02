@@ -26,7 +26,7 @@ from nvidia.dali.plugin.pytorch import DALIClassificationIterator
 # distributed
 import torch.distributed as dist
 from apex.parallel import DistributedDataParallel as DDP
-from apex.fp16_utils import FP16_Optimizer, network_to_half
+from apex.fp16_utils import FP16_Optimizer, BN_convert_float
 
 from tensorboardX import SummaryWriter
 import matplotlib
@@ -193,7 +193,7 @@ def main():
     model = models.resnet50(num_classes=85742).cuda()
 
     if args.fp16:
-        model = network_to_half(model)
+        model = BN_convert_float(model.half())
     model = DDP(model, delay_allreduce=True)
 
     optimizer = torch.optim.SGD(
@@ -275,10 +275,12 @@ def train(train_loader, model, optimizer, lrscheduler, epoch):
         data = data - 127.5
         data = data * 0.0078125
 
+        if args.fp16:
+            data = data.half()
         # measure data loading time
         data_time.update(time.time() - end)
 
-        output, feature = model(data, label=target)
+        output, feature = model(data)#, label=target)
         loss = criterion(output, target)
 
         acc1, acc5 = accuracy(output, target, topk=(1, 5))
@@ -339,7 +341,7 @@ def train(train_loader, model, optimizer, lrscheduler, epoch):
             _, loss_sort = torch.sort(loss)
 
             selected_idx = torch.cat((norm_sort[0:N], norm_sort[-N::], loss_sort[0:N], loss_sort[-N::]))
-            selected = data[selected_idx,].cpu().detach().numpy()
+            selected = data[selected_idx,].cpu().detach().numpy().astype(np.float32)
             for idx in range(selected.shape[0]):
                 im1 = np.squeeze(selected[idx,]).transpose((1,2,0))
                 im1 = vlimage.norm255(im1)
@@ -400,6 +402,8 @@ def test_lfw(model):
     data = torch.load("lfw-112x112.pth")["data"].float()
     data = data - 127.5
     data = data * 0.0078125
+    if args.fp16:
+        data = data.half()
     # print(data.mean(dim=(0,2,3)), data.std(dim=(0,2,3)))
     feature = np.zeros((12000, 512), dtype=np.float32)
     for i in range(0, 12000, 100):
