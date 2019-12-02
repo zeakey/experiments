@@ -43,8 +43,8 @@ class MarginLinear(nn.Module):
             sine = torch.sqrt(1.0 - torch.pow(cosine, 2))
             # phi = cos(theta + m2)
             phi = cosine*self.cos_m2 - sine*self.sin_m2
-            min_cos = torch.ones_like(phi) * self.min_cos
-            ph = torch.where(cosine>self.min_cos, phi, min_cos)
+
+            phi = torch.where(cosine>self.min_cos, phi, -cosine-2)
 
             one_hot = torch.zeros_like(cosine)
             one_hot.scatter_(1, label.view(-1, 1).long(), 1)
