@@ -239,11 +239,13 @@ def main():
     for epoch in range(args.start_epoch, args.epochs):
         # train and evaluate
         loss = train(train_loader, model, optimizer, scheduler, epoch)
+
         if args.local_rank == 0:
             lfwacc = test_lfw(model)
             tfboard_writer.add_scalar('test/lfw', lfwacc, epoch)
 
         if args.local_rank == 0:
+
             # save checkpoint
             save_checkpoint({
                 'epoch': epoch + 1,
@@ -251,6 +253,10 @@ def main():
                 'best_acc1': best_acc1,
                 'optimizer' : optimizer.state_dict()},
                 True, path=args.tmp)
+
+            weight_norm = model.state_dict()["module.classifier.weight"]
+            weight_norm = torch.norm(weight_norm, p=2, dim=1).mean().item()
+            tfboard_writer.add_scalar('train/weight-norm', weight_norm, epoch)
             tfboard_writer.add_scalar('train/loss', loss, epoch)
             tfboard_writer.add_scalar('train/lr', optimizer.param_groups[0]["lr"], epoch)
 
@@ -314,7 +320,6 @@ def train(train_loader, model, optimizer, lrscheduler, epoch):
         lr = optimizer.param_groups[0]["lr"]
 
         if args.local_rank == 0 and i % args.print_freq == 0:
-
             tfboard_writer.add_scalar("train/iter-lr", lr, epoch*train_loader_len+i)
             tfboard_writer.add_scalar("train/iter-acc1", top1.val, epoch*train_loader_len+i)
             tfboard_writer.add_scalar("train/iter-loss", losses.val, epoch*train_loader_len+i)
