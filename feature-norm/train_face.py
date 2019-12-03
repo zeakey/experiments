@@ -39,8 +39,6 @@ from models import preresnet, models
 import warnings
 warnings.filterwarnings("ignore", "(Possibly )?corrupt EXIF data", UserWarning)
 
-torch.autograd.set_detect_anomaly(True)
-
 parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                     help='manual epoch number (useful on restarts)')
@@ -196,8 +194,17 @@ def main():
         model = BN_convert_float(model.half())
     model = DDP(model, delay_allreduce=True)
 
+    base_params = []
+    fc_params = []
+    for name, p in model.named_parameters():
+        if "classifier.weight" in name:
+            fc_params.append(p)
+        else:
+            base_params.append(p)
+
     optimizer = torch.optim.SGD(
-        model.parameters(),
+        [{"params": base_params},
+        {"params": fc_params, "weight_decay": 0}],
         lr=args.lr,
         momentum=args.momentum,
         weight_decay=args.weight_decay
@@ -311,6 +318,11 @@ def train(train_loader, model, optimizer, lrscheduler, epoch):
         else:
             loss.backward()
 
+        # do gradient-clipping
+        for group in optimizer.param_groups:
+            for param in group["params"]:
+                param.grad.clamp_(-5, 5)
+
         optimizer.step()
 
         # measure elapsed time
@@ -320,9 +332,16 @@ def train(train_loader, model, optimizer, lrscheduler, epoch):
         lr = optimizer.param_groups[0]["lr"]
 
         if args.local_rank == 0 and i % args.print_freq == 0:
+
+            fnorm = torch.norm(feature, p=2, dim=1).detach().cpu().numpy()
+            wnorm = model.state_dict()["module.classifier.weight"]
+            wnorm = torch.norm(wnorm, p=2, dim=1).detach().cpu().numpy()
+
             tfboard_writer.add_scalar("train/iter-lr", lr, epoch*train_loader_len+i)
             tfboard_writer.add_scalar("train/iter-acc1", top1.val, epoch*train_loader_len+i)
             tfboard_writer.add_scalar("train/iter-loss", losses.val, epoch*train_loader_len+i)
+            tfboard_writer.add_scalar('train/iter-feature-norm', fnorm.mean(), epoch*train_loader_len+i)
+            tfboard_writer.add_scalar('train/iter-weight-norm', wnorm.mean(), epoch*train_loader_len+i)
 
             logger.info('Epoch[{0}/{1}] Iter[{2}/{3}]\t'
                   'BTime {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
@@ -377,7 +396,6 @@ def train(train_loader, model, optimizer, lrscheduler, epoch):
             tfboard_writer.add_image("train/images", selected, epoch*train_loader_len+i)
             tfboard_writer.add_histogram('train/norm-distr', norm.cpu().numpy(), epoch*train_loader_len+i)
             tfboard_writer.add_histogram('train/loss-distr', loss.cpu().numpy(), epoch*train_loader_len+i)
-            tfboard_writer.add_scalar('train/norm', norm.cpu().numpy().mean(), epoch*train_loader_len+i)
             selected = selected.numpy().transpose((1,2,0))
             selected = vlimage.norm255(selected)
             save_path = join(args.tmp, "images/train", "epoch%d-iter%d.jpg"%(epoch, i))
