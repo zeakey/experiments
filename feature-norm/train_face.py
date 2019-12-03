@@ -329,13 +329,12 @@ def train(train_loader, model, optimizer, lrscheduler, epoch):
         batch_time.update(time.time() - end)
         end = time.time()
 
-        lr = optimizer.param_groups[0]["lr"]
 
         if args.local_rank == 0 and i % args.print_freq == 0:
 
+            lr = optimizer.param_groups[0]["lr"]
             fnorm = torch.norm(feature, p=2, dim=1).detach().cpu().numpy()
-            wnorm = model.state_dict()["module.classifier.weight"]
-            wnorm = torch.norm(wnorm, p=2, dim=1).detach().cpu().numpy()
+            wnorm = torch.norm(model.module.classifier.weight.data, p=2, dim=1).detach().cpu().numpy()
 
             tfboard_writer.add_scalar("train/iter-lr", lr, epoch*train_loader_len+i)
             tfboard_writer.add_scalar("train/iter-acc1", top1.val, epoch*train_loader_len+i)
