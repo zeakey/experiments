@@ -147,8 +147,8 @@ class ResNet(nn.Module):
 
         x = self.prelu(x)
         feature = x.detach()
-        x = self.classifier(x, label)
         if self.training:
+            x = self.classifier(x, label)
             return x, feature
         else:
             return feature

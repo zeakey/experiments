@@ -23,18 +23,16 @@ class MarginLinear(nn.Module):
         self.reset_parameters()
 
     def reset_parameters(self):
-        torch.nn.init.kaiming_uniform_(self.weight, a=math.sqrt(5))
-        self.weight.data = F.normalize(self.weight.data)
-    
+        nn.init.xavier_uniform_(self.weight)
 
     def forward(self, input, label=None):
 
         input = F.normalize(input)
-        self.weight.data = F.normalize(self.weight.data)
-
-        # cos(theta)
-        cosine = F.linear(input, self.weight)
-        # print("input", input.mean(), "weight", weight.mean())
+        if False:
+            self.weight.data = F.normalize(self.weight.data)
+            cosine = F.linear(input, self.weight)
+        else:
+            cosine = F.linear(input, F.normalize(self.weight))
 
         if label is None:
             output = cosine * self.s
@@ -53,4 +51,36 @@ class MarginLinear(nn.Module):
             output = (one_hot * phi) + ((1.0 - one_hot) * cosine)
             output *= self.s
 
+        return output
+
+class ArcMarginModel(nn.Module):
+    def __init__(self, in_features, out_features, s=64, m=0.5):
+        super(ArcMarginModel, self).__init__()
+
+        self.weight = Parameter(torch.FloatTensor(out_features, in_features))
+        nn.init.xavier_uniform_(self.weight)
+
+        self.easy_margin = False
+        self.m = m
+        self.s = s
+
+        self.cos_m = math.cos(self.m)
+        self.sin_m = math.sin(self.m)
+        self.th = math.cos(math.pi - self.m)
+        self.mm = math.sin(math.pi - self.m) * self.m
+
+    def forward(self, input, label):
+        x = F.normalize(input)
+        W = F.normalize(self.weight)
+        cosine = F.linear(x, W)
+        sine = torch.sqrt(1.0 - torch.pow(cosine, 2))
+        phi = cosine * self.cos_m - sine * self.sin_m  # cos(theta + m)
+        if self.easy_margin:
+            phi = torch.where(cosine > 0, phi, cosine)
+        else:
+            phi = torch.where(cosine > self.th, phi, cosine - self.mm)
+        one_hot = torch.zeros_like(cosine)
+        one_hot.scatter_(1, label.view(-1, 1).long(), 1)
+        output = (one_hot * phi) + ((1.0 - one_hot) * cosine)
+        output *= self.s
         return output
