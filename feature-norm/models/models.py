@@ -99,7 +99,7 @@ class ResNet(nn.Module):
         self.fc = nn.Linear(512 * 7 * 7, 512)
         self.bn3 = nn.BatchNorm1d(512)
 
-        self.classifier = MarginLinear(512, 85742)
+        self.classifier = MarginLinear(512, num_classes)
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
