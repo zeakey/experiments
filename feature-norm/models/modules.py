@@ -5,7 +5,7 @@ import torch.nn.functional as F
 from torch.nn import Parameter
 
 class MarginLinear(nn.Module):
-    def __init__(self, in_features, out_features, s=64, m1=1, m2=0.5, m3=0):
+    def __init__(self, in_features, out_features, s=64, m1=1, m2=0, m3=0):
         super(MarginLinear, self).__init__()
         self.weight = Parameter(torch.FloatTensor(out_features, in_features))
         self.s = s
@@ -28,13 +28,9 @@ class MarginLinear(nn.Module):
     def forward(self, input, label=None):
 
         input = F.normalize(input)
-        if False:
-            self.weight.data = F.normalize(self.weight.data)
-            cosine = F.linear(input, self.weight)
-        else:
-            cosine = F.linear(input, F.normalize(self.weight))
+        cosine = F.linear(input, F.normalize(self.weight))
 
-        if label is None:
+        if label is None or self.m2 == 0:
             output = cosine * self.s
         else:
             # sin(theta)

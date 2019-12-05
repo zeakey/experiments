@@ -82,7 +82,7 @@ class IRBlock(nn.Module):
 
 class ResNet(nn.Module):
 
-    def __init__(self, block, layers, num_classes, use_se=True):
+    def __init__(self, block, layers, num_classes, s=64, m=0.5, use_se=True):
         self.inplanes = 64
         self.use_se = use_se
         super(ResNet, self).__init__()
@@ -99,7 +99,7 @@ class ResNet(nn.Module):
         self.fc = nn.Linear(512 * 7 * 7, 512)
         self.bn3 = nn.BatchNorm1d(512)
 
-        self.classifier = MarginLinear(512, num_classes)
+        self.classifier = MarginLinear(512, num_classes, s=s, m2=m)
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
@@ -168,10 +168,8 @@ def resnet34(pretrained=False, **kwargs):
     return model
 
 
-def resnet50(pretrained=False, **kwargs):
-    model = ResNet(IRBlock, [3, 4, 6, 3], use_se=True, **kwargs)
-    if pretrained:
-        model.load_state_dict(model_zoo.load_url(model_urls['resnet50']))
+def resnet50(s, m **kwargs):
+    model = ResNet(IRBlock, [3, 4, 6, 3], s=s, m=m, **kwargs)
     return model
 
 
