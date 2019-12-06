@@ -39,9 +39,11 @@ class MarginLinear(nn.Module):
 
             # sin(theta)
             sine = torch.sqrt(1.0 - torch.pow(cosine, 2))
+            cos_m2 = math.cos(m2)
+            sin_m2 = math.sin(m2)
             # psi = cos(theta + m2)
-            psi_theta = cosine*self.cos_m2 - sine*self.sin_m2
-            psi_theta = torch.where(cosine>self.min_cos, psi_theta, -psi_theta-2)
+            psi_theta = cosine*cos_m2 - sine*sin_m2
+            psi_theta = torch.where(cosine>-cos_m2, psi_theta, -psi_theta-2)
 
         elif m2 == 0 and m1 != 1:
             # multiplitive margin
