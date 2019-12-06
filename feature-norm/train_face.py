@@ -11,7 +11,6 @@ from vltools.pytorch import save_checkpoint, AverageMeter, accuracy
 import vltools.pytorch as vlpytorch
 from vltools.tcm.lr import CosAnnealingLR, MultiStepLR
 from vltools import image as vlimage
-from vltools import imagenet_labels
 
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
@@ -39,7 +38,7 @@ from models import preresnet, models, modules
 import warnings
 warnings.filterwarnings("ignore", "(Possibly )?corrupt EXIF data", UserWarning)
 
-parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
+parser = argparse.ArgumentParser(description='PyTorch')
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                     help='manual epoch number (useful on restarts)')
 parser.add_argument('--print-freq', default=100, type=int,
