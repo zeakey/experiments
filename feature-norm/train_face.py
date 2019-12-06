@@ -50,7 +50,7 @@ parser.add_argument('--dali-cpu', action='store_true',
 parser.add_argument('--data', metavar='DIR', default=None, help='path to dataset')
 parser.add_argument('--lfwdir', metavar='DIR', default="", help='path to LFW dataset')
 parser.add_argument('-j', '--workers', default=4, type=int, help='number of data loading workers')
-parser.add_argument('--num-classes', default=1000, type=int, metavar='N', help='Number of classes')
+parser.add_argument('--num-classes', default=1000, type=int, metavar='N', help='Number of classes (10572|85742)')
 parser.add_argument('--batch-size', default=256, type=int,
                     metavar='N', help='mini-batch size')
 # optimizer
@@ -294,9 +294,12 @@ def train(train_loader, model, optimizer, lrscheduler, epoch):
         # measure data loading time
         data_time.update(time.time() - end)
 
+        max_lambd_iter = 5*train_loader_len
         iter_idx = epoch*train_loader_len+i
-        lambd = (1 - np.cos(iter_idx * np.pi / (args.epochs * train_loader_len))) / 2
-
+        if iter_idx < max_lambd_iter:
+            lambd = (1 - np.cos(iter_idx * np.pi / max_lambd_iter)) / 2
+        else:
+            lambd = 1
         feature = model(data)
         output = linear(feature, label=target, m1=args.m1, m2=args.m2, lambd=lambd)
         loss = criterion(output, target)
