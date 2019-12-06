@@ -34,7 +34,7 @@ matplotlib.use("agg")
 import matplotlib.pyplot as plt
 from PIL import Image, ImageFont, ImageDraw
 
-from models import preresnet, models
+from models import preresnet, models, modules
 
 import warnings
 warnings.filterwarnings("ignore", "(Possibly )?corrupt EXIF data", UserWarning)
@@ -46,10 +46,12 @@ parser.add_argument('--print-freq', default=100, type=int,
                     metavar='N', help='print frequency (default: 10)')
 # data
 parser.add_argument('--use-rec', action="store_true")
+parser.add_argument('--dali-cpu', action='store_true',
+                    help='Runs CPU based version of DALI pipeline.')
 parser.add_argument('--data', metavar='DIR', default=None, help='path to dataset')
 parser.add_argument('--lfwdir', metavar='DIR', default="", help='path to LFW dataset')
 parser.add_argument('-j', '--workers', default=4, type=int, help='number of data loading workers')
-parser.add_argument('--num_classes', default=1000, type=int, metavar='N', help='Number of classes')
+parser.add_argument('--num-classes', default=1000, type=int, metavar='N', help='Number of classes')
 parser.add_argument('--batch-size', default=256, type=int,
                     metavar='N', help='mini-batch size')
 # optimizer
@@ -78,8 +80,10 @@ parser.add_argument('--dynamic-loss-scale', action='store_true',
 # distributed
 parser.add_argument("--local_rank", default=0, type=int)
 
-parser.add_argument('--dali-cpu', action='store_true',
-                    help='Runs CPU based version of DALI pipeline.')
+# margin
+parser.add_argument("--m1", default=1, type=int)
+parser.add_argument("--m2", default=0, type=float)
+parser.add_argument("--s", default=64, type=float)
 
 args = parser.parse_args()
 args.milestones = [int(i) for i in args.milestones.split(',')]
@@ -188,23 +192,18 @@ def main():
     train_loader_len = int(train_loader._size / args.batch_size)
 
     # model and optimizer
-    model = models.resnet50(num_classes=85742).cuda()
+    model = models.resnet50(num_classes=args.num_classes, s=args.s).cuda()
+    linear = modules.MarginLinear(in_features=512, out_features=args.num_classes).cuda()
 
     if args.fp16:
         model = BN_convert_float(model.half())
+        linear = BN_convert_float(linear.half())
     model = DDP(model, delay_allreduce=True)
-
-    base_params = []
-    fc_params = []
-    for name, p in model.named_parameters():
-        if "classifier.weight" in name:
-            fc_params.append(p)
-        else:
-            base_params.append(p)
+    linear = DDP(linear)
 
     optimizer = torch.optim.SGD(
-        [{"params": base_params},
-        {"params": fc_params, "weight_decay": 0}],
+        [{"params": model.parameters()},
+        {"params": linear.parameters()}],
         lr=args.lr,
         momentum=args.momentum,
         weight_decay=args.weight_decay
@@ -245,7 +244,7 @@ def main():
 
     for epoch in range(args.start_epoch, args.epochs):
         # train and evaluate
-        loss = train(train_loader, model, optimizer, scheduler, epoch)
+        loss = train(train_loader, (model, linear), optimizer, scheduler, epoch)
 
         if args.local_rank == 0:
             lfwacc = test_lfw(model)
@@ -261,7 +260,7 @@ def main():
                 'optimizer' : optimizer.state_dict()},
                 True, path=args.tmp)
 
-            weight_norm = model.state_dict()["module.classifier.weight"]
+            weight_norm = linear.module.weight.data
             weight_norm = torch.norm(weight_norm, p=2, dim=1).mean().item()
             tfboard_writer.add_scalar('train/weight-norm', weight_norm, epoch)
             tfboard_writer.add_scalar('train/loss', loss, epoch)
@@ -278,8 +277,11 @@ def train(train_loader, model, optimizer, lrscheduler, epoch):
     top5 = AverageMeter()
 
     train_loader_len = int(np.ceil(train_loader._size/args.batch_size))
+
+    model, linear = model
     # switch to train mode
     model.train()
+    linear.train()
 
     end = time.time()
     for i, data in enumerate(train_loader):
@@ -293,7 +295,11 @@ def train(train_loader, model, optimizer, lrscheduler, epoch):
         # measure data loading time
         data_time.update(time.time() - end)
 
-        output, feature = model(data, label=target)
+        iter_idx = epoch*train_loader_len+i
+        lambd = (1 - np.cos(iter_idx * np.pi / (args.epochs * train_loader_len))) / 2
+
+        feature = model(data)
+        output = linear(feature, label=target, m1=args.m1, m2=args.m2, lambd=lambd)
         loss = criterion(output, target)
 
         acc1, acc5 = accuracy(output, target, topk=(1, 5))
@@ -334,9 +340,10 @@ def train(train_loader, model, optimizer, lrscheduler, epoch):
 
             lr = optimizer.param_groups[0]["lr"]
             fnorm = torch.norm(feature, p=2, dim=1).detach().cpu().numpy()
-            wnorm = torch.norm(model.module.classifier.weight.data, p=2, dim=1).detach().cpu().numpy()
+            wnorm = torch.norm(linear.module.weight.data, p=2, dim=1).detach().cpu().numpy()
 
             tfboard_writer.add_scalar("train/iter-lr", lr, epoch*train_loader_len+i)
+            tfboard_writer.add_scalar("train/iter-lambda", lambd, epoch*train_loader_len+i)
             tfboard_writer.add_scalar("train/iter-acc1", top1.val, epoch*train_loader_len+i)
             tfboard_writer.add_scalar("train/iter-loss", losses.val, epoch*train_loader_len+i)
             tfboard_writer.add_scalar('train/iter-feature-norm', fnorm.mean(), epoch*train_loader_len+i)
@@ -347,15 +354,15 @@ def train(train_loader, model, optimizer, lrscheduler, epoch):
                   'DTime {data_time.val:.3f} ({data_time.avg:.3f})\t'
                   'Train Loss {loss.val:.3f} ({loss.avg:.3f})\t'
                   'Prec@1 {top1.val:.3f} ({top1.avg:.3f})\t'
-                  'LR: {lr:.2E}'.format(
+                  'LR: {lr:.2E} lambda: {lambd:.2E}'.format(
                    epoch, args.epochs, i, train_loader_len,
                    batch_time=batch_time, data_time=data_time, loss=losses, top1=top1,
-                   lr=lr))
+                   lr=lr, lambd=lambd))
 
         if args.local_rank == 0 and i % 1000 == 0:
             N = 16
 
-            norm = torch.norm(feature, p=2, dim=1)
+            norm = torch.norm(feature, p=2, dim=1).detach()
             loss = torch.nn.functional.cross_entropy(output.detach(), target, reduction="none")
             _, predict = torch.max(output, dim=1)
             probability = torch.nn.functional.softmax(output, dim=1)

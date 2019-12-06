@@ -5,47 +5,70 @@ import torch.nn.functional as F
 from torch.nn import Parameter
 
 class MarginLinear(nn.Module):
-    def __init__(self, in_features, out_features, s=64, m1=1, m2=0, m3=0):
+    def __init__(self, in_features, out_features, s=64):
         super(MarginLinear, self).__init__()
         self.weight = Parameter(torch.FloatTensor(out_features, in_features))
         self.s = s
-        self.m1 = m1
-        self.m2 = m2
-        self.m3 = m3
 
-        assert self.m1 == 1
-        assert self.m3 == 0
-
-        self.sin_m2 = math.sin(self.m2)
-        self.cos_m2 = math.cos(self.m2)
-        self.min_cos = math.cos(math.pi - self.m2)
+        self.mlambda = [
+            lambda x: x**0,
+            lambda x: x**1,
+            lambda x: 2*x**2-1,
+            lambda x: 4*x**3-3*x,
+            lambda x: 8*x**4-8*x**2+1,
+            lambda x: 16*x**5-20*x**3+5*x
+        ]
 
         self.reset_parameters()
 
     def reset_parameters(self):
         nn.init.xavier_uniform_(self.weight)
 
-    def forward(self, input, label=None):
+    def forward(self, input, m1=1, m2=0, label=None, lambd=1):
 
         input = F.normalize(input)
         cosine = F.linear(input, F.normalize(self.weight))
 
-        if label is None or self.m2 == 0:
+        m1 = int(m1)
+
+        if label is None or (m1 == 1 and m2 == 0):
             output = cosine * self.s
-        else:
+        
+        elif m2 != 0 and m1 == 1:
+            # additive margin
+
             # sin(theta)
             sine = torch.sqrt(1.0 - torch.pow(cosine, 2))
+            # psi = cos(theta + m2)
+            psi_theta = cosine*self.cos_m2 - sine*self.sin_m2
+            psi_theta = torch.where(cosine>self.min_cos, psi_theta, -psi_theta-2)
 
-            # phi = cos(theta + m2)
-            phi = cosine*self.cos_m2 - sine*self.sin_m2
+        elif m2 == 0 and m1 != 1:
+            # multiplitive margin
+            cos_m1_theta = self.mlambda[m1](cosine)
+            theta = cosine.acos()
+            k = (m1 * theta / math.pi).floor()
+            psi_theta = (-1)**k * cos_m1_theta - 2*k
 
-            phi = torch.where(cosine>self.min_cos, phi, -phi-2)
+        else:
+            theta = torch.acos(cosine)
+            def psi(theta, m1, m2):
+                cos_m1_theta = torch.cos(m1*theta)
+                cos_m1_theta_plus_m2 = torch.cos(m1*theta+m2)
 
-            one_hot = torch.zeros_like(cosine)
-            one_hot.scatter_(1, label.view(-1, 1).long(), 1)
+                k = ((m1 * theta + m2 ) / math.pi).floor()
+                psi_theta = (-1)**k * cos_m1_theta_plus_m2 - 2*k
 
-            output = (one_hot * phi) + ((1.0 - one_hot) * cosine)
-            output *= self.s
+                return psi_theta
+
+            psi_theta = psi(theta, m1, m2)
+
+        one_hot = torch.zeros_like(cosine, dtype=bool)
+        one_hot.scatter_(1, label.view(-1, 1).long(), 1)
+
+        output = torch.where(one_hot, psi_theta*lambd+cosine*(1-lambd), cosine)
+
+        output *= self.s
 
         return output
 

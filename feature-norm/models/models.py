@@ -82,9 +82,9 @@ class IRBlock(nn.Module):
 
 class ResNet(nn.Module):
 
-    def __init__(self, block, layers, num_classes, s=64, m=0.5, use_se=True):
+    def __init__(self, block, layers, num_classes, s=64):
         self.inplanes = 64
-        self.use_se = use_se
+        self.use_se = True
         super(ResNet, self).__init__()
         self.conv1 = nn.Conv2d(3, 64, kernel_size=3, stride=1, bias=False)
         self.bn1 = nn.BatchNorm2d(64)
@@ -98,8 +98,6 @@ class ResNet(nn.Module):
         self.dropout = nn.Dropout()
         self.fc = nn.Linear(512 * 7 * 7, 512)
         self.bn3 = nn.BatchNorm1d(512)
-
-        self.classifier = MarginLinear(512, num_classes, s=s, m2=m)
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
@@ -146,12 +144,7 @@ class ResNet(nn.Module):
         x = self.bn3(x)
 
         x = self.prelu(x)
-        feature = x.detach()
-        if self.training:
-            x = self.classifier(x, label)
-            return x, feature
-        else:
-            return feature
+        return x
 
 
 def resnet18(pretrained=False, **kwargs):
@@ -168,8 +161,8 @@ def resnet34(pretrained=False, **kwargs):
     return model
 
 
-def resnet50(s, m **kwargs):
-    model = ResNet(IRBlock, [3, 4, 6, 3], s=s, m=m, **kwargs)
+def resnet50(s, num_classes):
+    model = ResNet(IRBlock, [3, 4, 6, 3], s, num_classes)
     return model
 
 
