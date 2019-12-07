@@ -295,11 +295,13 @@ def train(train_loader, model, optimizer, lrscheduler, epoch):
         data_time.update(time.time() - end)
 
         max_lambd_iter = 5*train_loader_len
+        max_lambd = 1/6
+
         iter_idx = epoch*train_loader_len+i
         if iter_idx < max_lambd_iter:
-            lambd = (1 - np.cos(iter_idx * np.pi / max_lambd_iter)) / 2
+            lambd = ((1 - np.cos(iter_idx * np.pi / max_lambd_iter)) / 2) * max_lambd
         else:
-            lambd = 1
+            lambd = max_lambd
         feature = model(data)
         output = linear(feature, label=target, m1=args.m1, m2=args.m2, lambd=lambd)
         loss = criterion(output, target)
