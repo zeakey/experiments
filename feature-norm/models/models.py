@@ -82,7 +82,7 @@ class IRBlock(nn.Module):
 
 class ResNet(nn.Module):
 
-    def __init__(self, block, layers, num_classes, s=64):
+    def __init__(self, block, layers):
         self.inplanes = 64
         self.use_se = True
         super(ResNet, self).__init__()
@@ -147,41 +147,29 @@ class ResNet(nn.Module):
         return x
 
 
-def resnet18(pretrained=False, **kwargs):
-    model = ResNet(IRBlock, [2, 2, 2, 2], use_se=True, **kwargs)
-    if pretrained:
-        model.load_state_dict(model_zoo.load_url(model_urls['resnet18']))
+def resnet18():
+    model = ResNet(IRBlock, [2, 2, 2, 2])
     return model
 
 
-def resnet34(pretrained=False, **kwargs):
-    model = ResNet(IRBlock, [3, 4, 6, 3], use_se=True, **kwargs)
-    if pretrained:
-        model.load_state_dict(model_zoo.load_url(model_urls['resnet34']))
+def resnet34():
+    model = ResNet(IRBlock, [3, 4, 6, 3])
     return model
 
 
-def resnet50(s, num_classes):
-    model = ResNet(IRBlock, [3, 4, 6, 3], s, num_classes)
+def resnet50():
+    model = ResNet(IRBlock, [3, 4, 6, 3])
     return model
 
 
-def resnet101(pretrained=False, **kwargs):
-    model = ResNet(IRBlock, [3, 4, 23, 3], use_se=True, **kwargs)
-    if pretrained:
-        model.load_state_dict(model_zoo.load_url(model_urls['resnet101']))
+def resnet101():
+    model = ResNet(IRBlock, [3, 4, 23, 3])
     return model
 
 
-def resnet152(pretrained=False, **kwargs):
-    model = ResNet(IRBlock, [3, 8, 36, 3], use_se=True, **kwargs)
-    if pretrained:
-        model.load_state_dict(model_zoo.load_url(model_urls['resnet152']))
+def resnet152():
+    model = ResNet(IRBlock, [3, 8, 36, 3])
     return model
 
-
-def resnet_face18(use_se=True, **kwargs):
-    model = ResNet(IRBlock, [2, 2, 2, 2], use_se=use_se, **kwargs)
-    return model
 
 

@@ -33,7 +33,8 @@ class MarginLinear(nn.Module):
 
         if label is None or (m1 == 1 and m2 == 0):
             output = cosine * self.s
-        
+            return output
+
         elif m2 != 0 and m1 == 1:
             # additive margin
 

@@ -4,6 +4,7 @@ import torch.nn as nn
 import torchvision, cv2
 # logger and auxliaries
 import numpy as np
+import math
 import os, sys, argparse, time, shutil
 from os.path import join, split, isdir, isfile, dirname, abspath
 from vltools import Logger
@@ -33,7 +34,8 @@ matplotlib.use("agg")
 import matplotlib.pyplot as plt
 from PIL import Image, ImageFont, ImageDraw
 
-from models import preresnet, models, modules
+from models import preresnet, models, modules, sphere_face
+import verification, face_verification
 
 import warnings
 warnings.filterwarnings("ignore", "(Possibly )?corrupt EXIF data", UserWarning)
@@ -178,6 +180,8 @@ def main():
         torch.distributed.init_process_group(backend='nccl',
                                              init_method='env://')
         args.world_size = torch.distributed.get_world_size()
+    else:
+        args.world_size = 1
     if args.use_rec:
         traindir = args.data
         valdir = args.data
@@ -191,14 +195,18 @@ def main():
     train_loader_len = int(train_loader._size / args.batch_size)
 
     # model and optimizer
-    model = models.resnet50(num_classes=args.num_classes, s=args.s).cuda()
-    linear = modules.MarginLinear(in_features=512, out_features=args.num_classes).cuda()
+    model = sphere_face.Sphere20()
+    linear = nn.Linear(512, args.num_classes, bias=False)
+
+    model.cuda()
+    linear.cuda()
 
     if args.fp16:
         model = BN_convert_float(model.half())
         linear = BN_convert_float(linear.half())
-    model = DDP(model, delay_allreduce=True)
-    linear = DDP(linear)
+    if args.distributed:
+        model = DDP(model, delay_allreduce=True)
+        linear = DDP(linear)
 
     optimizer = torch.optim.SGD(
         [{"params": model.parameters()},
@@ -234,7 +242,7 @@ def main():
             if args.local_rank == 0:
                 logger.info("=> no checkpoint found at '{}'".format(args.resume))
 
-    scheduler = MultiStepLR(loader_len=train_loader_len,
+    scheduler = MultiStepLR(loader_len=train_loader_len, base_lr=args.lr,
                    milestones=args.milestones, gamma=args.gamma, warmup_epochs=args.warmup_epochs)
 
     if args.local_rank == 0:
@@ -259,7 +267,10 @@ def main():
                 'optimizer' : optimizer.state_dict()},
                 True, path=args.tmp)
 
-            weight_norm = linear.module.weight.data
+            if args.distributed:
+                weight_norm = linear.module.weight.data
+            else:
+                weight_norm = linear.weight.data
             weight_norm = torch.norm(weight_norm, p=2, dim=1).mean().item()
             tfboard_writer.add_scalar('train/weight-norm', weight_norm, epoch)
             tfboard_writer.add_scalar('train/loss', loss, epoch)
@@ -288,30 +299,30 @@ def train(train_loader, model, optimizer, lrscheduler, epoch):
         data = data[0]["data"]
         data = data - 127.5
         data = data * 0.0078125
+        assert target.max() < args.num_classes
 
         if args.fp16:
             data = data.half()
         # measure data loading time
         data_time.update(time.time() - end)
 
-        max_lambd_iter = 5*train_loader_len
-        max_lambd = 1/6
+        iter_index = epoch*train_loader_len+i
+        base, gamma, lambd_min, power = 1000, 0.12, 5, -1
+        lambd = base * math.pow(1 + gamma * iter_index, power)
+        lambd = float(max(lambd, lambd_min))
 
-        iter_idx = epoch*train_loader_len+i
-        if iter_idx < max_lambd_iter:
-            lambd = ((1 - np.cos(iter_idx * np.pi / max_lambd_iter)) / 2) * max_lambd
-        else:
-            lambd = max_lambd
         feature = model(data)
-        output = linear(feature, label=target, m1=args.m1, m2=args.m2, lambd=lambd)
+        output = linear(feature)#1/(1+lambd))#, m1=args.m1, m2=args.m2, lambd=lambd)
         loss = criterion(output, target)
 
         acc1, acc5 = accuracy(output, target, topk=(1, 5))
-        reduced_loss = reduce_tensor(loss.data)
-        acc1 = reduce_tensor(acc1)
-        acc5 = reduce_tensor(acc5)
-
-        losses.update(reduced_loss.item(), data.size(0))
+        if args.distributed:
+            reduced_loss = reduce_tensor(loss.data)
+            acc1 = reduce_tensor(acc1)
+            acc5 = reduce_tensor(acc5)
+            losses.update(reduced_loss.item(), data.size(0))
+        else:
+            losses.update(loss.item(), data.size(0))
         top1.update(acc1.item(), data.size(0))
         top5.update(acc5.item(), data.size(0))
 
@@ -336,15 +347,18 @@ def train(train_loader, model, optimizer, lrscheduler, epoch):
         optimizer.step()
 
         # measure elapsed time
+        torch.cuda.synchronize()
         batch_time.update(time.time() - end)
         end = time.time()
-
 
         if args.local_rank == 0 and i % args.print_freq == 0:
 
             lr = optimizer.param_groups[0]["lr"]
             fnorm = torch.norm(feature, p=2, dim=1).detach().cpu().numpy()
-            wnorm = torch.norm(linear.module.weight.data, p=2, dim=1).detach().cpu().numpy()
+            if args.distributed:
+                wnorm = torch.norm(linear.module.weight.data, p=2, dim=1).detach().cpu().numpy()
+            else:
+                wnorm = torch.norm(linear.weight.data, p=2, dim=1).detach().cpu().numpy()
 
             tfboard_writer.add_scalar("train/iter-lr", lr, epoch*train_loader_len+i)
             tfboard_writer.add_scalar("train/iter-lambda", lambd, epoch*train_loader_len+i)
@@ -363,7 +377,7 @@ def train(train_loader, model, optimizer, lrscheduler, epoch):
                    batch_time=batch_time, data_time=data_time, loss=losses, top1=top1,
                    lr=lr, lambd=lambd))
 
-        if args.local_rank == 0 and i % 1000 == 0:
+        if args.local_rank == 0 and i % 2 == 0:
             N = 16
 
             norm = torch.norm(feature, p=2, dim=1).detach()
@@ -429,10 +443,13 @@ def train(train_loader, model, optimizer, lrscheduler, epoch):
 
     return losses.avg
 
+@torch.no_grad()
 def test_lfw(model):
     from test_lfw import fold10
     model.eval()
-    data = torch.load("lfw-112x112.pth")["data"].float()
+    data = torch.load("lfw-112x112.pth", map_location=torch.device('cpu'))
+    label = data["label"].numpy()
+    data = data["data"].float()
     data = data - 127.5
     data = data * 0.0078125
     if args.fp16:
@@ -440,11 +457,23 @@ def test_lfw(model):
     # print(data.mean(dim=(0,2,3)), data.std(dim=(0,2,3)))
     feature = np.zeros((12000, 512), dtype=np.float32)
     for i in range(0, 12000, 100):
-        data1 = data[i:i+100,].cuda()
-        output = model(data1)
-        feature[i:i+100,] = output.detach().cpu().numpy()
-    acc = fold10(feature)
-    return acc
+        d1 = data[i:i+100,].cuda()
+        d2 = torch.flip(d1, dims=(3,))
+        o1 = model(d1)
+        o2 = model(d2)
+
+        if True:
+            o = o1+o2
+        else:
+            o = torch.cat((o1, o2), dim=1)
+        o = o.detach().cpu().numpy()
+
+        feature[i:i+100,] = o
+
+    acc1 = fold10(feature)
+    acc2 = face_verification.verification(feature, label)
+    logger.info("%f vs %f" % (acc1, acc2.mean()))
+    return acc2.mean()
 
 
 def reduce_tensor(tensor):
