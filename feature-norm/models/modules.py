@@ -75,6 +75,45 @@ class MarginLinear(nn.Module):
 
         return output
 
+class ArcLinear(nn.Module):
+    """
+    ArcFace
+    """
+    def __init__(self, in_features, out_features, s=64):
+        super(ArcLinear, self).__init__()
+        self.weight = Parameter(torch.FloatTensor(out_features, in_features))
+        self.s = s
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        nn.init.xavier_uniform_(self.weight)
+
+    def forward(self, input, label, m=0.5):
+
+        input = F.normalize(input)
+        cosine = F.linear(input, F.normalize(self.weight))
+
+        m = int(m)
+
+        if label is None or m == 1:
+            output = cosine * self.s
+            return output
+
+        # sin(theta)
+        sine = torch.sqrt(1.0 - torch.pow(cosine, 2))
+        cos_m = math.cos(m)
+        sin_m = math.sin(m)
+        # psi = cos(theta + m)
+        psi_theta = cosine*cos_m - sine*sin_m
+        psi_theta = torch.where(cosine>-cos_m, psi_theta, -psi_theta-2)
+
+        one_hot = torch.zeros_like(cosine)
+        one_hot.scatter_(1, label.view(-1, 1).long(), 1)
+
+        output = one_hot*psi_theta + (1-one_hot)*cosine
+        output *= self.s
+        return output
+
 class ArcMarginModel(nn.Module):
     def __init__(self, in_features, out_features, s=64, m=0.5):
         super(ArcMarginModel, self).__init__()
