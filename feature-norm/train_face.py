@@ -56,10 +56,10 @@ parser.add_argument('--num-classes', default=1000, type=int, metavar='N', help='
 parser.add_argument('--batch-size', default=256, type=int,
                     metavar='N', help='mini-batch size')
 # optimizer
-parser.add_argument('--epochs', default=20, type=int, metavar='N',
+parser.add_argument('--epochs', default=25, type=int, metavar='N',
                     help='number of total epochs to run')
 parser.add_argument('--warmup-epochs', type=int, default=2, help="warmup epochs")
-parser.add_argument('--milestones', default="10,15", type=str)
+parser.add_argument('--milestones', default="10,16,20", type=str)
 parser.add_argument('--lr', '--learning-rate', default=0.1, type=float,
                     metavar='LR', help='initial learning rate')
 parser.add_argument('--gamma', default=0.1, type=float,
