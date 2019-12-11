@@ -196,7 +196,8 @@ def main():
 
     # model and optimizer
     model = sphere_face.Sphere20()
-    linear = nn.Linear(512, args.num_classes, bias=False)
+    # linear = nn.Linear(512, args.num_classes, bias=False)
+    linear = sphere_face.AngleLinear(512, args.num_classes)
 
     model.cuda()
     linear.cuda()
@@ -307,12 +308,13 @@ def train(train_loader, model, optimizer, lrscheduler, epoch):
         data_time.update(time.time() - end)
 
         iter_index = epoch*train_loader_len+i
-        base, gamma, lambd_min, power = 1000, 0.12, 5, -1
+        base, gamma, lambd_min, power = 1000, 0.1, 5, -1
         lambd = base * math.pow(1 + gamma * iter_index, power)
         lambd = float(max(lambd, lambd_min))
+        lambd = math.pow(lambd, power)
 
         feature = model(data)
-        output = linear(feature)#1/(1+lambd))#, m1=args.m1, m2=args.m2, lambd=lambd)
+        output = linear(feature, target, lambd)
         loss = criterion(output, target)
 
         acc1, acc5 = accuracy(output, target, topk=(1, 5))
@@ -354,11 +356,11 @@ def train(train_loader, model, optimizer, lrscheduler, epoch):
         if args.local_rank == 0 and i % args.print_freq == 0:
 
             lr = optimizer.param_groups[0]["lr"]
-            fnorm = torch.norm(feature, p=2, dim=1).detach().cpu().numpy()
+            fnorm = torch.norm(feature.float(), p=2, dim=1).detach().cpu().numpy()
             if args.distributed:
-                wnorm = torch.norm(linear.module.weight.data, p=2, dim=1).detach().cpu().numpy()
+                wnorm = torch.norm(linear.module.weight.data.float(), p=2, dim=1).detach().cpu().numpy()
             else:
-                wnorm = torch.norm(linear.weight.data, p=2, dim=1).detach().cpu().numpy()
+                wnorm = torch.norm(linear.weight.data.float(), p=2, dim=1).detach().cpu().numpy()
 
             tfboard_writer.add_scalar("train/iter-lr", lr, epoch*train_loader_len+i)
             tfboard_writer.add_scalar("train/iter-lambda", lambd, epoch*train_loader_len+i)
@@ -377,10 +379,10 @@ def train(train_loader, model, optimizer, lrscheduler, epoch):
                    batch_time=batch_time, data_time=data_time, loss=losses, top1=top1,
                    lr=lr, lambd=lambd))
 
-        if args.local_rank == 0 and i % 2 == 0:
+        if args.local_rank == 0 and iter_index % 1000 == 0:
             N = 16
 
-            norm = torch.norm(feature, p=2, dim=1).detach()
+            norm = torch.norm(feature.float(), p=2, dim=1).detach()
             loss = torch.nn.functional.cross_entropy(output.detach(), target, reduction="none")
             _, predict = torch.max(output, dim=1)
             probability = torch.nn.functional.softmax(output, dim=1)
