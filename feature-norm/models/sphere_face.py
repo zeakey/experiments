@@ -65,8 +65,7 @@ class Sphere20(nn.Module):
                 nn.init.xavier_normal_(m.weight)
                 nn.init.constant_(m.bias, 0)
             elif isinstance(m, nn.Linear):
-                nn.init.xavier_normal_(m.weight)
-                nn.init.constant_(m.bias, 0)
+                nn.init.normal_(m.weight, std=0.01)
 
     def forward(self, x):
         x = self.relu1_1(self.conv1_1(x))
@@ -97,7 +96,7 @@ class AngleLinear(nn.Module):
         self.in_features = in_features
         self.out_features = out_features
         self.weight = Parameter(torch.zeros(out_features, in_features))
-        self.weight.data.uniform_(-1, 1).renorm_(2,1,1e-5).mul_(1e5)
+        nn.init.normal_(self.weight, std=0.01)
         self.m = m
 
         self.mlambda = [
@@ -123,7 +122,7 @@ class AngleLinear(nn.Module):
 
         cos_m_theta = self.mlambda[self.m](cos_theta)
         theta = cos_theta.data.acos()
-        k = (self.m*theta/3.14159265).floor()
+        k = (self.m*theta/math.pi).floor()
         phi_theta = (-1)**k * cos_m_theta - 2*k
 
         # NOTE that sphereface doesn't normalize features
@@ -132,7 +131,6 @@ class AngleLinear(nn.Module):
 
         one_hot = torch.zeros_like(cos_theta, dtype=bool)
         one_hot.scatter_(1, label.view(-1, 1).long(), 1)
-        output = torch.where(one_hot, lambd*phi_theta, (1-lambd)*cos_theta)
-        output = torch.where(one_hot, cos_theta*(1-lambd)+phi_theta*lambd, cos_theta)
+        output = torch.where(one_hot, lambd*phi_theta+(1-lambd)*cos_theta, cos_theta)
 
-        return output
+        return cos_theta
