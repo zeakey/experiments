@@ -96,7 +96,7 @@ class AngleLinear(nn.Module):
         super(AngleLinear, self).__init__()
         self.in_features = in_features
         self.out_features = out_features
-        self.weight = Parameter(torch.zeros(in_features, out_features))
+        self.weight = Parameter(torch.zeros(out_features, in_features))
         self.weight.data.uniform_(-1, 1).renorm_(2,1,1e-5).mul_(1e5)
         self.m = m
 
@@ -118,7 +118,7 @@ class AngleLinear(nn.Module):
         normed_weight = F.normalize(self.weight, p=2, dim=1)
         normed_input = F.normalize(input, p=2, dim=1)
 
-        cos_theta = normed_input.mm(normed_weight)
+        cos_theta = normed_input.mm(normed_weight.t())
         cos_theta = cos_theta.clamp(-1,1)
 
         cos_m_theta = self.mlambda[self.m](cos_theta)
