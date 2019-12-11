@@ -306,12 +306,12 @@ def train(train_loader, model, optimizer, lrscheduler, epoch):
             data = data.half()
         # measure data loading time
         data_time.update(time.time() - end)
-
         iter_index = epoch*train_loader_len+i
+
         base, gamma, lambd_min, power = 1000, 0.1, 5, -1
         lambd = base * math.pow(1 + gamma * iter_index, power)
         lambd = float(max(lambd, lambd_min))
-        lambd = math.pow(lambd, power)
+        lambd = 1/(1+lambd)
 
         feature = model(data)
         output = linear(feature, target, lambd)
