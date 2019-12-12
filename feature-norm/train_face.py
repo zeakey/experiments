@@ -308,10 +308,16 @@ def train(train_loader, model, optimizer, lrscheduler, epoch):
         data_time.update(time.time() - end)
         iter_index = epoch*train_loader_len+i
 
-        base, gamma, lambd_min, power = 1000, 0.1, 5, -1
-        lambd = base * math.pow(1 + gamma * iter_index, power)
-        lambd = float(max(lambd, lambd_min))
-        lambd = 1/(1+lambd)
+        if epoch < args.warmup_epochs:
+            lambd = 0
+        else:
+            lambd_effective_iter = (epoch-args.warmup_epochs)*train_loader_len+i
+            max_lam = 1 / 6
+            max_lam_iter = 2000
+            if lambd_effective_iter <= max_lam_iter:
+                lambd = (1 - math.cos(lambd_effective_iter * math.pi / max_lam_iter)) / 2 * max_lam
+            else:
+                lambd = max_lam
 
         feature = model(data)
         output = linear(feature, target, lambd)
