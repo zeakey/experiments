@@ -108,7 +108,7 @@ class AngleLinear(nn.Module):
             lambda x: 16*x**5-20*x**3+5*x
         ]
 
-    def forward(self, input, label=None, lambd=1):
+    def forward(self, input, label=None, lambd=0):
 
         input_norm = torch.norm(input, p=2, dim=1)
         if label is None:
@@ -117,8 +117,7 @@ class AngleLinear(nn.Module):
         normed_weight = F.normalize(self.weight, p=2, dim=1)
         normed_input = F.normalize(input, p=2, dim=1)
 
-        cos_theta = normed_input.mm(normed_weight.t())
-        cos_theta = cos_theta.clamp(-1,1)
+        cos_theta = F.linear(normed_input, normed_weight)
 
         cos_m_theta = self.mlambda[self.m](cos_theta)
         theta = cos_theta.data.acos()
@@ -133,4 +132,4 @@ class AngleLinear(nn.Module):
         one_hot.scatter_(1, label.view(-1, 1).long(), 1)
         output = torch.where(one_hot, lambd*phi_theta+(1-lambd)*cos_theta, cos_theta)
 
-        return cos_theta
+        return output
