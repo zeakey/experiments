@@ -85,6 +85,8 @@ parser.add_argument("--local_rank", default=0, type=int)
 parser.add_argument("--m1", default=1, type=int)
 parser.add_argument("--m2", default=0, type=float)
 parser.add_argument("--s", default=64, type=float)
+parser.add_argument("--max-lam", default=0.1666, type=float)
+parser.add_argument("--max-lam-iter", default=2000, type=int)
 
 args = parser.parse_args()
 args.milestones = [int(i) for i in args.milestones.split(',')]
@@ -309,18 +311,16 @@ def train(train_loader, model, optimizer, lrscheduler, epoch):
         iter_index = epoch*train_loader_len+i
 
         if epoch < args.warmup_epochs:
-            lambd = 0
+            lam = 0
         else:
-            lambd_effective_iter = (epoch-args.warmup_epochs)*train_loader_len+i
-            max_lam = 1 / 6
-            max_lam_iter = 2000
-            if lambd_effective_iter <= max_lam_iter:
-                lambd = (1 - math.cos(lambd_effective_iter * math.pi / max_lam_iter)) / 2 * max_lam
+            lam_effective_iter = (epoch-args.warmup_epochs)*train_loader_len+i
+            if lam_effective_iter <= args.max_lam_iter:
+                lam = (1 - math.cos(lam_effective_iter * math.pi / args.max_lam_iter)) / 2 * args.max_lam
             else:
-                lambd = max_lam
+                lam = args.max_lam
 
         feature = model(data)
-        output = linear(feature, target, lambd)
+        output = linear(feature, target, lam)
         loss = criterion(output, target)
 
         acc1, acc5 = accuracy(output, target, topk=(1, 5))
@@ -369,7 +369,7 @@ def train(train_loader, model, optimizer, lrscheduler, epoch):
                 wnorm = torch.norm(linear.weight.data.float(), p=2, dim=1).detach().cpu().numpy()
 
             tfboard_writer.add_scalar("train/iter-lr", lr, epoch*train_loader_len+i)
-            tfboard_writer.add_scalar("train/iter-lambda", lambd, epoch*train_loader_len+i)
+            tfboard_writer.add_scalar("train/iter-lambda", lam, epoch*train_loader_len+i)
             tfboard_writer.add_scalar("train/iter-acc1", top1.val, epoch*train_loader_len+i)
             tfboard_writer.add_scalar("train/iter-loss", losses.val, epoch*train_loader_len+i)
             tfboard_writer.add_scalar('train/iter-feature-norm', fnorm.mean(), epoch*train_loader_len+i)
@@ -383,7 +383,7 @@ def train(train_loader, model, optimizer, lrscheduler, epoch):
                   'LR: {lr:.2E} lambda: {lambd:.2E}'.format(
                    epoch, args.epochs, i, train_loader_len,
                    batch_time=batch_time, data_time=data_time, loss=losses, top1=top1,
-                   lr=lr, lambd=lambd))
+                   lr=lr, lambd=lam))
 
         if args.local_rank == 0 and iter_index % 1000 == 0:
             N = 16
