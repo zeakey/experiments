@@ -41,8 +41,8 @@ def verification(features, labels, nfolds=10):
 
         features1 = features.copy()
         # whiten featuress
-        f1 = features1[0::2]
-        f2 = features1[1::2]
+        f1 = features1[0::2] # select 0, 2, 4,...
+        f2 = features1[1::2] # select 1, 3, 5,...
         valfeat = np.concatenate((f1[val_idx,], f2[val_idx,]), axis=0)
 
         mu = valfeat.mean(axis=0)
