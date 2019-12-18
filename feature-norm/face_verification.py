@@ -33,7 +33,7 @@ def verification(features, labels, nfolds=10):
     assert features.shape[0] == labels.size*2
 
     folds = KFold(n_splits=nfolds, shuffle=False)
-    thresholds = np.linspace(-1, 1, 1000)
+    thresholds = np.linspace(-1, 1, 20000)
 
     accuracy = np.zeros((nfolds,))
 
@@ -88,7 +88,7 @@ if __name__ == "__main__":
     model = sphere_face.Sphere20()
     model = model.cuda()
     model = torch.nn.DataParallel(model)
-    # model.load_state_dict(torch.load("tmp/sphereface-norm-grad-r4/model_best.pth")["state_dict"])
+    model.load_state_dict(torch.load("tmp/sphereface-norm-grad-r5/model_best.pth")["state_dict"])
 
     data = torch.load("lfw-112x112.pth", map_location=torch.device('cpu'))
     label = data["label"].numpy()
