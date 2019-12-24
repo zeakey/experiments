@@ -4,6 +4,24 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn import Parameter
 
+class NormLinear(nn.Module):
+    def __init__(self, in_features, out_features, s=64):
+        super(NormLinear, self).__init__()
+        self.weight = Parameter(torch.FloatTensor(out_features, in_features))
+        self.s = s
+
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        nn.init.kaiming_uniform_(self.weight, 1.0)
+
+    def forward(self, input):
+
+        input = F.normalize(input)
+        self.weight.data = F.normalize(self.weight.data)
+
+        return self.s * F.linear(input, self.weight)
+
 class MarginLinear(nn.Module):
     def __init__(self, in_features, out_features, s=64):
         super(MarginLinear, self).__init__()
