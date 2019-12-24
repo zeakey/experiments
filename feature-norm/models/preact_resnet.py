@@ -47,12 +47,16 @@ class IRBlock(nn.Module):
 
     def __init__(self, inplanes, planes, stride=1, downsample=None, use_se=True):
         super(IRBlock, self).__init__()
-        self.bn0 = nn.BatchNorm2d(inplanes)
-        self.conv1 = conv3x3(inplanes, inplanes)
         self.bn1 = nn.BatchNorm2d(inplanes)
-        self.prelu = nn.PReLU()
+        self.prelu1 = nn.PReLU()
+        self.conv1 = conv3x3(inplanes, inplanes)
+
+        self.bn2 = nn.BatchNorm2d(inplanes)
+        self.prelu2 = nn.PReLU()
         self.conv2 = conv3x3(inplanes, planes, stride)
-        self.bn2 = nn.BatchNorm2d(planes)
+
+        self.bn3 = nn.BatchNorm2d(planes)
+
         self.downsample = downsample
         self.stride = stride
         self.use_se = use_se
@@ -61,13 +65,17 @@ class IRBlock(nn.Module):
 
     def forward(self, x):
         residual = x
-        out = self.bn0(x)
-        out = self.conv1(out)
-        out = self.bn1(out)
-        out = self.prelu(out)
 
-        out = self.conv2(out)
+        out = self.bn1(x)
+        out = self.prelu1(out)
+        out = self.conv1(out)
+
         out = self.bn2(out)
+        out = self.prelu2(out)
+        out = self.conv2(out)
+
+        out = self.bn3(out)
+
         if self.use_se:
             out = self.se(out)
 
@@ -75,39 +83,50 @@ class IRBlock(nn.Module):
             residual = self.downsample(x)
 
         out += residual
-        out = self.prelu(out)
 
         return out
 
 
 class ResNet(nn.Module):
 
-    def __init__(self, block, layers):
+    def __init__(self, block, layers, zero_init_residual=True):
+
         self.inplanes = 64
         self.use_se = True
         super(ResNet, self).__init__()
+
         self.conv1 = nn.Conv2d(3, 64, kernel_size=3, stride=1, bias=False)
         self.bn1 = nn.BatchNorm2d(64)
-        self.prelu = nn.PReLU()
-        self.maxpool = nn.MaxPool2d(kernel_size=2, stride=2)
-        self.layer1 = self._make_layer(block, 64, layers[0])
+        self.prelu1 = nn.PReLU()
+
+        self.layer1 = self._make_layer(block, 64, layers[0], stride=2)
         self.layer2 = self._make_layer(block, 128, layers[1], stride=2)
         self.layer3 = self._make_layer(block, 256, layers[2], stride=2)
         self.layer4 = self._make_layer(block, 512, layers[3], stride=2)
+
         self.bn2 = nn.BatchNorm2d(512)
-        self.dropout = nn.Dropout()
+        self.dropout = nn.Dropout(p=0.4)
         self.fc = nn.Linear(512 * 7 * 7, 512)
-        self.bn3 = nn.BatchNorm1d(512)
+        self.bn3 = nn.BatchNorm1d(512, affine=False)
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
                 nn.init.xavier_normal_(m.weight)
             elif isinstance(m, nn.BatchNorm2d) or isinstance(m, nn.BatchNorm1d):
-                nn.init.constant_(m.weight, 1)
-                nn.init.constant_(m.bias, 0)
+                if m.weight is not None:
+                    nn.init.constant_(m.weight, 1)
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
             elif isinstance(m, nn.Linear):
                 nn.init.xavier_normal_(m.weight)
                 nn.init.constant_(m.bias, 0)
+
+        # zero initiates residual
+        if zero_init_residual:
+            for m in self.modules():
+                if isinstance(m, IRBlock):
+                    nn.init.constant_(m.bn3.weight, 0)
+
 
     def _make_layer(self, block, planes, blocks, stride=1):
         downsample = None
@@ -129,8 +148,8 @@ class ResNet(nn.Module):
     def forward(self, x, label=None):
         x = self.conv1(x)
         x = self.bn1(x)
-        x = self.prelu(x)
-        x = self.maxpool(x)
+        x = self.prelu1(x)
+
 
         x = self.layer1(x)
         x = self.layer2(x)
@@ -143,7 +162,6 @@ class ResNet(nn.Module):
         x = self.fc(x)
         x = self.bn3(x)
 
-        x = self.prelu(x)
         return x
 
 
