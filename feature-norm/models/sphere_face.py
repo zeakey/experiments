@@ -92,19 +92,27 @@ class Sphere20(nn.Module):
 
 class AngleLinear(nn.Module):
     def __init__(self, in_features, out_features, m=4):
+
         super(AngleLinear, self).__init__()
+
         self.in_features = in_features
         self.out_features = out_features
+
         self.weight = Parameter(torch.zeros(out_features, in_features))
         nn.init.kaiming_uniform_(self.weight, 1.0)
+
         self.m = m
         self.psi = Psi.apply
+
 
     def forward(self, input, label, lam=0):
 
         self.weight.data = F.normalize(self.weight.data, p=2, dim=1)
         output = self.psi(input, self.weight, label, self.m, lam)
+
         return output
+
+
 
 mlambda = [
     lambda x: x ** 0,
@@ -158,7 +166,7 @@ class Psi(torch.autograd.Function):
         k = (k * onehot.to(input.dtype)).sum(dim=1).view(-1, 1)
         lam = torch.tensor(lam, device=input.device)
         m = torch.tensor(m, device=input.device)
-        ctx.save_for_backward(input, label, weight , cos_theta, k, m, lam)
+        ctx.save_for_backward(input, label, weight, cos_theta, k, m, lam)
 
         return output
 
