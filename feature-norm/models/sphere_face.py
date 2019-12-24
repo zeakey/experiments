@@ -64,8 +64,6 @@ class Sphere20(nn.Module):
             if isinstance(m, nn.Conv2d):
                 nn.init.xavier_normal_(m.weight)
                 nn.init.constant_(m.bias, 0)
-            elif isinstance(m, nn.Linear):
-                nn.init.normal_(m.weight, std=0.01)
 
     def forward(self, x):
         x = self.relu1_1(self.conv1_1(x))
