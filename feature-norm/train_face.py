@@ -7,7 +7,7 @@ import numpy as np
 import math
 import os, sys, argparse, time, shutil
 from os.path import join, split, isdir, isfile, dirname, abspath
-from vltools import Logger
+from vltools import Logger, run_path
 from vltools.pytorch import save_checkpoint, AverageMeter, accuracy
 import vltools.pytorch as vlpytorch
 from vltools.tcm.lr import CosAnnealingLR, MultiStepLR
@@ -34,17 +34,22 @@ matplotlib.use("agg")
 import matplotlib.pyplot as plt
 from PIL import Image, ImageFont, ImageDraw
 
-from models import preresnet, models, modules, sphere_face
+from models import preact_resnet, modules, sphere_face, sphereface
 import verification, face_verification
 
 import warnings
 warnings.filterwarnings("ignore", "(Possibly )?corrupt EXIF data", UserWarning)
+warnings.filterwarnings("ignore", "Legacy autograd function with non-static forward method is deprecated and will be removed", UserWarning)
+
 
 parser = argparse.ArgumentParser(description='PyTorch')
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                     help='manual epoch number (useful on restarts)')
 parser.add_argument('--print-freq', default=100, type=int,
                     metavar='N', help='print frequency (default: 10)')
+# model
+parser.add_argument('--model', default="sphere_face.Sphere20", help='backbone model')
+parser.add_argument('--linear', default="sphere_face.AngleLinear", help='linear layer')
 # data
 parser.add_argument('--use-rec', action="store_true")
 parser.add_argument('--dali-cpu', action='store_true',
@@ -58,7 +63,7 @@ parser.add_argument('--batch-size', default=256, type=int,
 # optimizer
 parser.add_argument('--epochs', default=25, type=int, metavar='N',
                     help='number of total epochs to run')
-parser.add_argument('--warmup-epochs', type=int, default=2, help="warmup epochs")
+parser.add_argument('--warmup-epochs', type=int, default=0, help="warmup epochs")
 parser.add_argument('--milestones', default="10,16,20", type=str)
 parser.add_argument('--lr', '--learning-rate', default=0.1, type=float,
                     metavar='LR', help='initial learning rate')
@@ -80,18 +85,27 @@ parser.add_argument('--dynamic-loss-scale', action='store_true',
                     '--static-loss-scale.')
 # distributed
 parser.add_argument("--local_rank", default=0, type=int)
-
 # margin
 parser.add_argument("--m1", default=1, type=int)
 parser.add_argument("--m2", default=0, type=float)
 parser.add_argument("--s", default=64, type=float)
 parser.add_argument("--max-lam", default=0.1666, type=float)
 parser.add_argument("--max-lam-iter", default=2000, type=int)
-
+# data aug
+parser.add_argument("--hole", action="store_true")
+# seed
+parser.add_argument("--seed", default=7, type=int)
 args = parser.parse_args()
-args.milestones = [int(i) for i in args.milestones.split(',')]
 
-torch.backends.cudnn.benchmark = True
+args.milestones = [int(i) for i in args.milestones.split(',')]
+args.tmp = run_path(args.tmp)
+
+# https://pytorch.org/docs/stable/notes/randomness.html
+np.random.seed(args.seed)
+torch.manual_seed(args.seed)
+torch.cuda.manual_seed_all(args.seed)
+torch.backends.cudnn.deterministic = True
+torch.backends.cudnn.benchmark = False
 
 # DALI pipelines
 class HybridTrainPipe(Pipeline):
@@ -197,12 +211,12 @@ def main():
     train_loader_len = int(train_loader._size / args.batch_size)
 
     # model and optimizer
-    model = sphere_face.Sphere20()
-    # linear = nn.Linear(512, args.num_classes, bias=False)
-    linear = sphere_face.AngleLinear(512, args.num_classes)
+    # model = preact_resnet.resnet34()
+    model = args.model+"().cuda()"
+    linear = args.linear+"(512, %d).cuda()"%args.num_classes
+    model = eval(model)
+    linear = eval(linear)
 
-    model.cuda()
-    linear.cuda()
 
     if args.fp16:
         model = BN_convert_float(model.half())
@@ -306,18 +320,31 @@ def train(train_loader, model, optimizer, lrscheduler, epoch):
 
         if args.fp16:
             data = data.half()
+
+        # hole aug
+        if args.hole:
+            N = data.shape[0]
+            xs = np.concatenate((np.arange(0,50), np.arange(62,112)), axis=0)
+            xs = np.random.choice(xs, N).tolist()
+            ys = np.random.choice(data.shape[2], N).tolist()
+            for n in range(N):
+                x1 = xs[n]
+                y1 = ys[n]
+                data[n, :, y1-5:y1+5, x1-5:x1+5] = 0
+
         # measure data loading time
         data_time.update(time.time() - end)
-        iter_index = epoch*train_loader_len+i
+        iter_index = epoch * train_loader_len + i
 
         if epoch < args.warmup_epochs:
             lam = 0
         else:
-            lam_effective_iter = (epoch-args.warmup_epochs)*train_loader_len+i
-            if lam_effective_iter <= args.max_lam_iter:
-                lam = (1 - math.cos(lam_effective_iter * math.pi / args.max_lam_iter)) / 2 * args.max_lam
+            lam_effective_iter = (epoch - args.warmup_epochs) * train_loader_len + i
+            if True:
+                lam = max(5, 1000 / (lam_effective_iter * 0.1 + 1))
+                lam = 1 / (1 + lam)
             else:
-                lam = args.max_lam
+                lam = (1 - math.cos(lam_effective_iter * 2 * math.pi / args.max_lam_iter)) / 2 * args.max_lam
 
         feature = model(data)
         output = linear(feature, target, lam)
@@ -462,6 +489,7 @@ def test_lfw(model):
     data = data * 0.0078125
     if args.fp16:
         data = data.half()
+
     # print(data.mean(dim=(0,2,3)), data.std(dim=(0,2,3)))
     feature = np.zeros((12000, 512), dtype=np.float32)
     for i in range(0, 12000, 100):
@@ -478,7 +506,7 @@ def test_lfw(model):
 
         feature[i:i+100,] = o
 
-    acc1 = fold10(feature)
+    acc1 = fold10(feature, label)
     acc2 = face_verification.verification(feature, label)
     logger.info("%f vs %f" % (acc1, acc2.mean()))
     return acc2.mean()

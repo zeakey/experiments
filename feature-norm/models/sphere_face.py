@@ -93,9 +93,6 @@ class AngleLinear(nn.Module):
 
         super(AngleLinear, self).__init__()
 
-        self.in_features = in_features
-        self.out_features = out_features
-
         self.weight = Parameter(torch.zeros(out_features, in_features))
         nn.init.kaiming_uniform_(self.weight, 1.0)
 
