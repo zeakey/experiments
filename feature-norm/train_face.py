@@ -110,7 +110,7 @@ torch.backends.cudnn.benchmark = False
 # DALI pipelines
 class HybridTrainPipe(Pipeline):
     def __init__(self, batch_size, num_threads, device_id, data_dir, crop, dali_cpu=True):
-        super(HybridTrainPipe, self).__init__(batch_size, num_threads, device_id, seed=12 + device_id)
+        super(HybridTrainPipe, self).__init__(batch_size, num_threads, device_id, seed=args.seed+device_id)
         
         # MXnet rec reader
         self.input = ops.MXNetReader(path=join(data_dir, "train.rec"), index_path=join(data_dir, "train.idx"),
@@ -138,38 +138,6 @@ class HybridTrainPipe(Pipeline):
         images = self.decode(self.jpegs)
         images = self.resize(images)
         output = self.cmnp(images.gpu(), mirror=rng)
-        return [output, self.labels]
-
-# DALI pipelines
-class HybridValPipe(Pipeline):
-    def __init__(self, batch_size, num_threads, device_id, data_dir, crop, dali_cpu=True):
-        super(HybridValPipe, self).__init__(batch_size, num_threads, device_id, seed=12 + device_id)
-        
-        # MXnet rec reader
-        self.input = ops.MXNetReader(path=join(data_dir, "train.rec"), index_path=join(data_dir, "train.idx"),
-                                    random_shuffle=True, shard_id=args.local_rank, num_shards=args.world_size)
-        # let user decide which pipeline works him bets for RN version he runs
-        dali_device = 'cpu' if dali_cpu else 'gpu'
-        decoder_device = 'cpu' if dali_cpu else 'mixed'
-        # This padding sets the size of the internal nvJPEG buffers to be able to handle all images from full-sized ImageNet
-        # without additional reallocations
-        device_memory_padding = 211025920 if decoder_device == 'mixed' else 0
-        host_memory_padding = 140544512 if decoder_device == 'mixed' else 0
-        self.decode = ops.ImageDecoder(device=decoder_device, output_type=types.RGB)
-        self.resize = ops.Resize(device=dali_device, resize_x=112, resize_y=112, interp_type=types.INTERP_TRIANGULAR)
-        self.cmnp = ops.CropMirrorNormalize(device="gpu",
-                                            output_dtype=types.FLOAT,
-                                            output_layout=types.NCHW,
-                                            crop=(112, 112),
-                                            image_type=types.RGB
-                                            )
-        print('DALI "{0}" variant'.format(dali_device))
-
-    def define_graph(self):
-        self.jpegs, self.labels = self.input(name="Reader")
-        images = self.decode(self.jpegs)
-        images = self.resize(images)
-        output = self.cmnp(images.gpu())
         return [output, self.labels]
 
 # loss function
