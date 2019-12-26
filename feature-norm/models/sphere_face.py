@@ -93,14 +93,14 @@ class AngleLinear(nn.Module):
 
         super(AngleLinear, self).__init__()
 
-        self.weight = Parameter(torch.zeros(out_features, in_features))
+        self.weight = Parameter(torch.Tensor(out_features, in_features))
         nn.init.kaiming_uniform_(self.weight, 1.0)
 
         self.m = m
         self.psi = Psi.apply
 
 
-    def forward(self, input, label, lam=0):
+    def forward(self, input, label, lam):
 
         self.weight.data = F.normalize(self.weight.data, p=2, dim=1)
         output = self.psi(input, self.weight, label, self.m, lam)
