@@ -231,16 +231,18 @@ def main():
                    milestones=args.milestones, gamma=args.gamma, warmup_epochs=args.warmup_epochs)
 
     if args.local_rank == 0:
-            lfwacc = test_lfw(model)
-            tfboard_writer.add_scalar('test/lfw', lfwacc, -1)
+        lfwacc, lfwthres = test_lfw(model)
+        tfboard_writer.add_scalar('test/lfw-acc', lfwacc, -1)
+        tfboard_writer.add_scalar('test/lfw-thres', lfwthres, -1)
 
     for epoch in range(args.start_epoch, args.epochs):
         # train and evaluate
         loss = train(train_loader, (model, linear), optimizer, scheduler, epoch)
 
         if args.local_rank == 0:
-            lfwacc = test_lfw(model)
-            tfboard_writer.add_scalar('test/lfw', lfwacc, epoch)
+            lfwacc, lfwthres = test_lfw(model)
+            tfboard_writer.add_scalar('test/lfw-acc', lfwacc, epoch)
+            tfboard_writer.add_scalar('test/lfw-thres', lfwthres, epoch)
 
         if args.local_rank == 0:
 
@@ -308,11 +310,14 @@ def train(train_loader, model, optimizer, lrscheduler, epoch):
             lam = 0
         else:
             lam_effective_iter = (epoch - args.warmup_epochs) * train_loader_len + i
-            if True:
+            if False:
                 lam = max(5, 1000 / (lam_effective_iter * 0.1 + 1))
                 lam = 1 / (1 + lam)
             else:
-                lam = (1 - math.cos(lam_effective_iter * 2 * math.pi / args.max_lam_iter)) / 2 * args.max_lam
+                if lam_effective_iter >= args.max_lam_iter:
+                    lam = args.max_lam
+                else:
+                    lam = (1 - math.cos(lam_effective_iter * math.pi / args.max_lam_iter)) / 2 * args.max_lam
 
         feature = model(data)
         output = linear(feature, target, lam)
@@ -345,7 +350,7 @@ def train(train_loader, model, optimizer, lrscheduler, epoch):
         # do gradient-clipping
         for group in optimizer.param_groups:
             for param in group["params"]:
-                param.grad.clamp_(-5, 5)
+                param.grad.clamp_(-1, 1)
 
         optimizer.step()
 
@@ -475,9 +480,9 @@ def test_lfw(model):
         feature[i:i+100,] = o
 
     acc1 = fold10(feature, label)
-    acc2 = face_verification.verification(feature, label)
+    acc2, thres2 = face_verification.verification(feature, label)
     logger.info("%f vs %f" % (acc1, acc2.mean()))
-    return acc2.mean()
+    return acc2.mean(), thres2.mean()
 
 
 def reduce_tensor(tensor):
