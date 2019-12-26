@@ -36,6 +36,7 @@ def verification(features, labels, nfolds=10):
     thresholds = np.linspace(-1, 1, 20000)
 
     accuracy = np.zeros((nfolds,))
+    threshold = np.zeros((nfolds,))
 
     for i, (val_idx, test_idx) in enumerate(folds.split(np.arange(labels.size))):
 
@@ -67,10 +68,13 @@ def verification(features, labels, nfolds=10):
 
         acc = search_threshold(val_distance, val_label, thresholds)
         optimal_thres = thresholds[np.argmax(acc)]
-
         pred = test_distance <= optimal_thres
+
         accuracy[i] = (pred == test_label).mean()
-    return accuracy
+        # convert distance to cos (distance = -cos)
+        threshold[i] = -optimal_thres
+
+    return accuracy, threshold
 
 def search_threshold(distance, label, thresholds):
     assert distance.size == label.size
