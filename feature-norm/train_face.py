@@ -320,7 +320,7 @@ def train(train_loader, model, optimizer, lrscheduler, epoch):
                     lam = (1 - math.cos(lam_effective_iter * math.pi / args.max_lam_iter)) / 2 * args.max_lam
 
         feature = model(data)
-        output = linear(feature, target, lam)
+        output = linear(feature, target)
         loss = criterion(output, target)
 
         acc1, acc5 = accuracy(output, target, topk=(1, 5))
@@ -353,6 +353,8 @@ def train(train_loader, model, optimizer, lrscheduler, epoch):
                 param.grad.clamp_(-1, 1)
 
         optimizer.step()
+
+        torch.cuda.synchronize()
 
         # measure elapsed time
         torch.cuda.synchronize()
