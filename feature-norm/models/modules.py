@@ -111,9 +111,7 @@ class ArcLinear(nn.Module):
         input = F.normalize(input)
         cosine = F.linear(input, F.normalize(self.weight))
 
-        m = int(m)
-
-        if label is None or m == 1:
+        if label is None or m == 0:
             output = cosine * self.s
             return output
 
