@@ -208,7 +208,7 @@ def main():
                             static_loss_scale=args.static_loss_scale,
                             dynamic_loss_scale=args.dynamic_loss_scale, verbose=False)
     # records
-    best_acc1 = 0
+    best_lfw = 0
 
     # optionally resume from a checkpoint
     if args.resume:
@@ -217,7 +217,7 @@ def main():
                 logger.info("=> loading checkpoint '{}'".format(args.resume))
             checkpoint = torch.load(args.resume, map_location=torch.device('cpu'))
             args.start_epoch = checkpoint['epoch']
-            best_acc1 = checkpoint['best_acc1']
+            best_lfw = checkpoint['best_lfw']
             model.load_state_dict(checkpoint['state_dict'])
             optimizer.load_state_dict(checkpoint['optimizer'])
             if args.local_rank == 0:
@@ -229,11 +229,16 @@ def main():
 
     scheduler = MultiStepLR(loader_len=train_loader_len, base_lr=args.lr,
                    milestones=args.milestones, gamma=args.gamma, warmup_epochs=args.warmup_epochs)
+    # scheduler = CosAnnealingLR(loader_len=train_loader_len,
+    #                            max_lr=args.lr, min_lr=1e-5,
+    #                            epochs=args.epochs,
+    #                            warmup_epochs=args.warmup_epochs)
 
     if args.local_rank == 0:
         lfwacc, lfwthres = test_lfw(model)
         tfboard_writer.add_scalar('test/lfw-acc', lfwacc, -1)
         tfboard_writer.add_scalar('test/lfw-thres', lfwthres, -1)
+        logger.info("Initial LFW accuracy %f"%lfwacc)
 
     for epoch in range(args.start_epoch, args.epochs):
         # train and evaluate
@@ -241,6 +246,10 @@ def main():
 
         if args.local_rank == 0:
             lfwacc, lfwthres = test_lfw(model)
+            if lfwacc > best_lfw:
+                best_lfw = lfwacc
+
+            logger.info("Epoch %d: LFW accuracy %f (best=%f)"%(epoch, lfwacc, best_lfw))
             tfboard_writer.add_scalar('test/lfw-acc', lfwacc, epoch)
             tfboard_writer.add_scalar('test/lfw-thres', lfwthres, epoch)
 
@@ -250,7 +259,7 @@ def main():
             save_checkpoint({
                 'epoch': epoch + 1,
                 'state_dict': model.state_dict(),
-                'best_acc1': best_acc1,
+                'best_lfw': best_lfw,
                 'optimizer' : optimizer.state_dict()},
                 True, path=args.tmp)
 
@@ -264,7 +273,7 @@ def main():
             tfboard_writer.add_scalar('train/lr', optimizer.param_groups[0]["lr"], epoch)
 
     if args.local_rank == 0:
-        logger.info("Optimization done, ALL results saved to %s." % args.tmp)
+        logger.info("Optimization done (best lfw-acc=%.4f), ALL results saved to %s." % (best_lfw, args.tmp))
 
 def train(train_loader, model, optimizer, lrscheduler, epoch):
     batch_time = AverageMeter()
@@ -455,7 +464,6 @@ def train(train_loader, model, optimizer, lrscheduler, epoch):
 
 @torch.no_grad()
 def test_lfw(model):
-    from test_lfw import fold10
     model.eval()
     data = torch.load("lfw-112x112.pth", map_location=torch.device('cpu'))
     label = data["label"].numpy()
@@ -464,8 +472,6 @@ def test_lfw(model):
     data = data * 0.0078125
     if args.fp16:
         data = data.half()
-
-    # print(data.mean(dim=(0,2,3)), data.std(dim=(0,2,3)))
     feature = np.zeros((12000, 512), dtype=np.float32)
     for i in range(0, 12000, 100):
         d1 = data[i:i+100,].cuda()
@@ -481,10 +487,8 @@ def test_lfw(model):
 
         feature[i:i+100,] = o
 
-    acc1 = fold10(feature, label)
-    acc2, thres2 = face_verification.verification(feature, label)
-    logger.info("%f vs %f" % (acc1, acc2.mean()))
-    return acc2.mean(), thres2.mean()
+    acc, thres = face_verification.verification(feature, label)
+    return acc.mean(), thres.mean()
 
 
 def reduce_tensor(tensor):
