@@ -97,31 +97,33 @@ class ArcLinear(nn.Module):
     """
     ArcFace
     """
-    def __init__(self, in_features, out_features, s=64):
+    def __init__(self, in_features, out_features, s=64, m=0.5):
         super(ArcLinear, self).__init__()
         self.weight = Parameter(torch.FloatTensor(out_features, in_features))
         self.s = s
+        self.m = m
+        self.cos_m = math.cos(self.m)
+        self.sin_m = math.sin(self.m)
+
         self.reset_parameters()
 
     def reset_parameters(self):
         nn.init.xavier_uniform_(self.weight)
 
-    def forward(self, input, label, m=0.5):
+    def forward(self, input, label=None):
 
-        input = F.normalize(input)
-        cosine = F.linear(input, F.normalize(self.weight))
+        cosine = F.linear(F.normalize(input), F.normalize(self.weight))
 
-        if label is None or m == 0:
+        if label is None or self.m == 0:
             output = cosine * self.s
             return output
 
         # sin(theta)
         sine = torch.sqrt(1.0 - torch.pow(cosine, 2))
-        cos_m = math.cos(m)
-        sin_m = math.sin(m)
+
         # psi = cos(theta + m)
-        psi_theta = cosine*cos_m - sine*sin_m
-        psi_theta = torch.where(cosine>-cos_m, psi_theta, -psi_theta-2)
+        psi_theta = cosine*self.cos_m - sine*self.sin_m
+        psi_theta = torch.where(cosine > -self.cos_m, psi_theta, -psi_theta-2)
 
         one_hot = torch.zeros_like(cosine)
         one_hot.scatter_(1, label.view(-1, 1).long(), 1)
