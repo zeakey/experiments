@@ -63,7 +63,7 @@ parser.add_argument('--batch-size', default=256, type=int,
 # optimizer
 parser.add_argument('--epochs', default=20, type=int, metavar='N',
                     help='number of total epochs to run')
-parser.add_argument('--warmup-epochs', type=int, default=0, help="warmup epochs")
+parser.add_argument('--warmup-epochs', type=int, default=2, help="warmup epochs")
 parser.add_argument('--milestones', default="10,15,18", type=str)
 parser.add_argument('--lr', '--learning-rate', default=0.1, type=float,
                     metavar='LR', help='initial learning rate')
@@ -86,6 +86,7 @@ parser.add_argument('--dynamic-loss-scale', action='store_true',
 # distributed
 parser.add_argument("--local_rank", default=0, type=int)
 # margin
+# cos(m1\theta + m2)
 parser.add_argument("--m1", default=1, type=int)
 parser.add_argument("--m2", default=0, type=float)
 parser.add_argument("--s", default=64, type=float)
@@ -181,10 +182,9 @@ def main():
     # model and optimizer
     # model = preact_resnet.resnet34()
     model = args.model+"().cuda()"
-    linear = args.linear+"(512, %d).cuda()"%args.num_classes
+    linear = args.linear+"(in_features=512, out_features=%d, m=%f).cuda()" % (args.num_classes, args.m2)
     model = eval(model)
     linear = eval(linear)
-
 
     if args.fp16:
         model = BN_convert_float(model.half())
@@ -295,7 +295,7 @@ def train(train_loader, model, optimizer, lrscheduler, epoch):
         data = data[0]["data"]
         data = data - 127.5
         data = data * 0.0078125
-        assert target.max() < args.num_classes
+        assert target.max() < args.num_classes, "%d vs %d" % (target.max(), args.num_classes)
 
         if args.fp16:
             data = data.half()
