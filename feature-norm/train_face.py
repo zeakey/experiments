@@ -75,6 +75,7 @@ parser.add_argument('--weight-decay', '--wd', default=1e-4, type=float,
 parser.add_argument('--resume', default="", type=str, metavar='PATH',
                     help='path to latest checkpoint')
 parser.add_argument('--tmp', help='tmp folder', default="tmp/face")
+parser.add_argument('--label-smoothing', type=float, default=0.0, help="label-smoothing temperature")
 # FP16
 parser.add_argument('--fp16', action='store_true',
                     help='Runs CPU based version of DALI pipeline.')
@@ -142,7 +143,10 @@ class HybridTrainPipe(Pipeline):
         return [output, self.labels]
 
 # loss function
-criterion = torch.nn.CrossEntropyLoss()
+if args.label_smoothing == 0:
+    criterion = torch.nn.CrossEntropyLoss()
+else:
+    criterion = torch.nn.KLDivLoss(reduction="batchmean")
 
 if args.local_rank == 0:
     tfboard_writer = writer = SummaryWriter(log_dir=args.tmp)
@@ -331,7 +335,16 @@ def train(train_loader, model, optimizer, lrscheduler, epoch):
 
         feature = model(data)
         output = linear(feature, target)
-        loss = criterion(output, target)
+        if args.label_smoothing == 0:
+            loss = criterion(output, target)
+        else:
+            with torch.no_grad():
+                label_distr = torch.zeros_like(output)
+                noise = args.label_smoothing / (1 - args.num_classes)
+                confidence = 1 - args.label_smoothing
+                label_distr.fill_(noise)
+                label_distr.scatter_(1, target.unsqueeze(1), confidence)
+            loss = criterion(torch.log_softmax(output, dim=1), label_distr)
 
         acc1, acc5 = accuracy(output, target, topk=(1, 5))
         if args.distributed:
