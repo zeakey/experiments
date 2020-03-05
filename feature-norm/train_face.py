@@ -231,18 +231,18 @@ def main():
             if args.local_rank == 0:
                 logger.info("=> no checkpoint found at '{}'".format(args.resume))
 
-    # scheduler = MultiStepLR(loader_len=train_loader_len, base_lr=args.lr,
-    #                milestones=args.milestones, gamma=args.gamma, warmup_epochs=args.warmup_epochs)
-    scheduler = CosAnnealingLR(loader_len=train_loader_len,
-                               max_lr=args.lr, min_lr=1e-5,
-                               epochs=args.epochs,
-                               warmup_epochs=args.warmup_epochs)
+    scheduler = MultiStepLR(loader_len=train_loader_len, base_lr=args.lr,
+                   milestones=args.milestones, gamma=args.gamma, warmup_epochs=args.warmup_epochs)
+    # scheduler = CosAnnealingLR(loader_len=train_loader_len,
+    #                            max_lr=args.lr, min_lr=1e-5,
+    #                            epochs=args.epochs,
+    #                            warmup_epochs=args.warmup_epochs)
 
     if args.local_rank == 0:
         lfwacc, lfwthres = test_lfw(model)
-        tfboard_writer.add_scalar('test/lfw-acc', lfwacc, 0)
-        tfboard_writer.add_scalar('test/lfw-thres', lfwthres, 0)
-        logger.info("Initial LFW accuracy %f"%lfwacc)
+        tfboard_writer.add_scalar('test/lfw-acc', lfwacc, -1)
+        tfboard_writer.add_scalar('test/lfw-thres', lfwthres, -1)
+        logger.info("Initial LFW accuracy %f" % lfwacc)
 
     for epoch in range(args.start_epoch, args.epochs):
         # train and evaluate
@@ -253,10 +253,10 @@ def main():
             if lfwacc > best_lfw:
                 best_lfw = lfwacc
 
-            logger.info("Epoch %d: LFW accuracy %f (best=%f)"%(epoch+1, lfwacc, best_lfw))
-            tfboard_writer.add_scalar('test/lfw-acc', lfwacc, epoch+1)
-            tfboard_writer.add_scalar('test/best-lfw-acc', best_lfw, epoch+1)
-            tfboard_writer.add_scalar('test/lfw-thres', lfwthres, epoch+1)
+            logger.info("Epoch %d: LFW accuracy %f (best=%f)"%(epoch, lfwacc, best_lfw))
+            tfboard_writer.add_scalar('test/lfw-acc', lfwacc, epoch)
+            tfboard_writer.add_scalar('test/best-lfw-acc', best_lfw, epoch)
+            tfboard_writer.add_scalar('test/lfw-thres', lfwthres, epoch)
 
         if args.local_rank == 0:
 
@@ -273,9 +273,9 @@ def main():
             else:
                 weight_norm = linear.weight.data
             weight_norm = torch.norm(weight_norm, p=2, dim=1).mean().item()
-            tfboard_writer.add_scalar('train/weight-norm', weight_norm, epoch+1)
-            tfboard_writer.add_scalar('train/loss', loss, epoch+1)
-            tfboard_writer.add_scalar('train/lr', optimizer.param_groups[0]["lr"], epoch+1)
+            tfboard_writer.add_scalar('train/weight-norm', weight_norm, epoch)
+            tfboard_writer.add_scalar('train/loss', loss, epoch)
+            tfboard_writer.add_scalar('train/lr', optimizer.param_groups[0]["lr"], epoch)
 
     if args.local_rank == 0:
         logger.info("Optimization done (best lfw-acc=%.4f), ALL results saved to %s." % (best_lfw, args.tmp))
