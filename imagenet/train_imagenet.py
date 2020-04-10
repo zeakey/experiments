@@ -325,6 +325,8 @@ def train(train_loader, model, optimizer, lrscheduler, epoch):
 
         if args.local_rank == 0 and i % args.print_freq == 0:
             tfboard_writer.add_scalar("train/iter-lr", lr, epoch*train_loader_len+i)
+            tfboard_writer.add_scalar("train/iter-loss", losses.val, epoch*train_loader_len+i)
+
             logger.info('Epoch[{0}/{1}] Iter[{2}/{3}]\t'
                   'Batch Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
                   'Data Time {data_time.val:.3f} ({data_time.avg:.3f})\t'
