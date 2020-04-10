@@ -34,7 +34,7 @@ class Bottleneck(nn.Module):
         out = self.bn1(x)
         out = F.relu(out)
         if hasattr(self, 'downsample'):
-            residual = self.downsample(residual)
+            residual = self.downsample(out)
         out = self.conv1(out)
 
         out = self.bn2(out)
