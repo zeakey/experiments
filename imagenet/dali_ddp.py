@@ -46,7 +46,7 @@ parser.add_argument('-j', '--workers', default=4, type=int, help='number of data
 parser.add_argument('--num_classes', default=None, type=int, metavar='N', help='Number of classes')
 parser.add_argument('--batch-size', default=256, type=int,
                     metavar='N', help='mini-batch size')
-
+# image options
 parser.add_argument('--imsize', default=256, type=int,
                     metavar='N', help='im crop size')
 parser.add_argument('--imcrop', default=224, type=int,
