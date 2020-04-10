@@ -35,7 +35,6 @@ parser.add_argument('--print-freq', default=50, type=int,
 parser.add_argument('--arch', '--a', metavar='STR', default="torchvision.models.resnet.resnet50", help='model')
 parser.add_argument('--data', metavar='DIR', default=None, help='path to dataset')
 parser.add_argument('-j', '--workers', default=4, type=int, help='number of data loading workers')
-parser.add_argument('--num_classes', default=None, type=int, metavar='N', help='Number of classes')
 parser.add_argument('--batch-size', default=256, type=int,
                     metavar='N', help='mini-batch size')
 # image options
@@ -43,12 +42,11 @@ parser.add_argument('--imsize', default=256, type=int,
                     metavar='N', help='im crop size')
 parser.add_argument('--imcrop', default=224, type=int,
                     metavar='N', help='image crop size')
-
+# optimization
 parser.add_argument('--epochs', default=90, type=int, metavar='N',
                     help='number of total epochs to run')
 parser.add_argument('--warmup-epochs', type=int, default=5, help="warmup epochs")
 parser.add_argument('--milestones', default="30,60,80", type=str)
-
 parser.add_argument('--lr', '--learning-rate', default=0.1, type=float,
                     metavar='LR', help='initial learning rate')
 parser.add_argument('--stepsize', '--step-size', default=None, type=int,
@@ -73,18 +71,6 @@ parser.add_argument('--dynamic-loss-scale', action='store_true',
 parser.add_argument("--local_rank", default=0, type=int)
 parser.add_argument('--dali-cpu', action='store_true',
                     help='Runs CPU based version of DALI pipeline.')
-# prune args
-parser.add_argument('--no-retrain', action="store_true")
-parser.add_argument('--use-rec', action="store_true")
-parser.add_argument('--delta-lambda', type=float, default=2e-5, help='Delta lambda')
-parser.add_argument('--l1lambda', type=float, default=1e-5, help='sparsity regularization')
-parser.add_argument('--sparse-thres', type=float, default=1e-2, help='sparse threshold')
-parser.add_argument('--prune-type', type=int, default=0, help="prune method")
-parser.add_argument('--percent', type=float, default=0.5, help='pruning percent')
-# retrain args
-parser.add_argument('--retrain-epochs', type=int, default=90, help='retrain epochs')
-parser.add_argument('--retrain-milestones', default="30,60,80", type=str)
-parser.add_argument('--retrain-lr', type=float, default=1e-1, help='retrain learning rate')
 # debug
 args = parser.parse_args()
 os.makedirs(args.tmp, exist_ok=True)
