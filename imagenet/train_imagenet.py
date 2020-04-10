@@ -33,15 +33,13 @@ parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
 parser.add_argument('--print-freq', default=50, type=int,
                     metavar='N', help='print frequency (default: 10)')
 parser.add_argument('--arch', '--a', metavar='STR', default="torchvision.models.resnet.resnet50", help='model')
+# data
 parser.add_argument('--data', metavar='DIR', default=None, help='path to dataset')
+parser.add_argument('--use-rec', action='store_true', help='Use mxnet record.')
+parser.add_argument('--batch-size', default=256, type=int, metavar='N', help='mini-batch size')
+parser.add_argument('--imsize', default=256, type=int, metavar='N', help='im crop size')
+parser.add_argument('--imcrop', default=224, type=int, metavar='N', help='image crop size')
 parser.add_argument('-j', '--workers', default=4, type=int, help='number of data loading workers')
-parser.add_argument('--batch-size', default=256, type=int,
-                    metavar='N', help='mini-batch size')
-# image options
-parser.add_argument('--imsize', default=256, type=int,
-                    metavar='N', help='im crop size')
-parser.add_argument('--imcrop', default=224, type=int,
-                    metavar='N', help='image crop size')
 # optimization
 parser.add_argument('--epochs', default=90, type=int, metavar='N',
                     help='number of total epochs to run')
@@ -75,7 +73,6 @@ parser.add_argument('--dali-cpu', action='store_true',
 args = parser.parse_args()
 os.makedirs(args.tmp, exist_ok=True)
 args.milestones = [int(i) for i in args.milestones.split(',')]
-args.retrain_milestones = [int(i) for i in args.retrain_milestones.split(',')]
 
 torch.backends.cudnn.benchmark = True
 
@@ -261,7 +258,6 @@ def main():
             logger.info("Best acc1=%.5f" % best_acc1)
             tfboard_writer.add_scalar('train/loss', loss, epoch)
             tfboard_writer.add_scalar('train/lr', optimizer.param_groups[0]["lr"], epoch)
-
             tfboard_writer.add_scalar('test/acc1', acc1, epoch)
             tfboard_writer.add_scalar('test/acc5', acc5, epoch)
 
