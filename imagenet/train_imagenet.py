@@ -5,7 +5,6 @@ from torch.optim import lr_scheduler
 import torchvision
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
-# logger and auxliaries
 import numpy as np
 import os, sys, argparse, time, shutil
 from os.path import join, split, isdir, isfile, dirname, abspath
@@ -16,24 +15,17 @@ from vlkit.pytorch import save_checkpoint, AverageMeter, accuracy
 from vlkit.pytorch.datasets import ilsvrc2012
 import vlkit.pytorch as vlpytorch
 from vlkit.lr import CosAnnealingLR, MultiStepLR
-
-
 # DALI data reader
 from nvidia.dali.pipeline import Pipeline
 import nvidia.dali.ops as ops
 import nvidia.dali.types as types
 from nvidia.dali.plugin.pytorch import DALIClassificationIterator
-
 # distributed
 import torch.distributed as dist
 from apex.parallel import DistributedDataParallel as DDP
-
-
-# flops
-from thop import profile
-
 import warnings
 warnings.filterwarnings("ignore", "(Possibly )?corrupt EXIF data", UserWarning)
+import preact_resnet
 
 parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
@@ -68,7 +60,7 @@ parser.add_argument('--weight-decay', '--wd', default=1e-4, type=float,
                     metavar='W', help='weight decay')
 parser.add_argument('--resume', default="", type=str, metavar='PATH',
                     help='path to latest checkpoint')
-parser.add_argument('--tmp', help='tmp folder', default="tmp/prune")
+parser.add_argument('--tmp', help='tmp folder', default="tmp/pre-resnet50")
 # FP16
 parser.add_argument('--fp16', action='store_true',
                     help='Runs CPU based version of DALI pipeline.')
@@ -79,7 +71,6 @@ parser.add_argument('--dynamic-loss-scale', action='store_true',
                     '--static-loss-scale.')
 # distributed
 parser.add_argument("--local_rank", default=0, type=int)
-
 parser.add_argument('--dali-cpu', action='store_true',
                     help='Runs CPU based version of DALI pipeline.')
 # prune args
@@ -95,8 +86,6 @@ parser.add_argument('--retrain-epochs', type=int, default=90, help='retrain epoc
 parser.add_argument('--retrain-milestones', default="30,60,80", type=str)
 parser.add_argument('--retrain-lr', type=float, default=1e-1, help='retrain learning rate')
 # debug
-parser.add_argument('--randbn', action="store_true")
-parser.add_argument('--reinitbn', action="store_true")
 args = parser.parse_args()
 os.makedirs(args.tmp, exist_ok=True)
 args.milestones = [int(i) for i in args.milestones.split(',')]
