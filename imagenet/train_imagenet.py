@@ -10,7 +10,7 @@ import numpy as np
 import os, sys, argparse, time, shutil
 from os.path import join, split, isdir, isfile, dirname, abspath
 from torch.utils.tensorboard import SummaryWriter
-from vlkit import Logger
+from vlkit.training import Logger
 from vlkit import image as vlimage
 from vlkit.pytorch import save_checkpoint, AverageMeter, accuracy
 from vlkit.pytorch.datasets import ilsvrc2012
@@ -27,7 +27,7 @@ from nvidia.dali.plugin.pytorch import DALIClassificationIterator
 # distributed
 import torch.distributed as dist
 from apex.parallel import DistributedDataParallel as DDP
-from apex.fp16_utils import FP16_Optimizer, network_to_half
+
 
 # flops
 from thop import profile
@@ -72,7 +72,7 @@ parser.add_argument('--tmp', help='tmp folder', default="tmp/prune")
 # FP16
 parser.add_argument('--fp16', action='store_true',
                     help='Runs CPU based version of DALI pipeline.')
-parser.add_argument('--static-loss-scale', type=float, default=1,
+parser.add_argument('--static-loss-scale', type=float, default=128,
                     help='Static loss scale, positive power of 2 values can improve fp16 convergence.')
 parser.add_argument('--dynamic-loss-scale', action='store_true',
                     help='Use dynamic loss scaling.  If supplied, this argument supersedes ' +
@@ -103,6 +103,9 @@ args.milestones = [int(i) for i in args.milestones.split(',')]
 args.retrain_milestones = [int(i) for i in args.retrain_milestones.split(',')]
 
 torch.backends.cudnn.benchmark = True
+
+if args.fp16:
+    from apex import amp
 
 # DALI pipelines
 class HybridTrainPipe(Pipeline):
@@ -177,6 +180,7 @@ criterion = torch.nn.CrossEntropyLoss()
 if args.local_rank == 0:
     tfboard_writer = writer = SummaryWriter(log_dir=args.tmp)
     logger = Logger(join(args.tmp, "log.txt"))
+    print(args.local_rank)
 
 args.distributed = False
 if 'WORLD_SIZE' in os.environ:
@@ -214,25 +218,19 @@ def main():
 
     # model and optimizer
     model = eval(args.arch+"()").cuda()
-    # random initiate bn weights
-
-    if args.fp16:
-        model = network_to_half(model)
-    model = DDP(model, delay_allreduce=True)
-
     optimizer = torch.optim.SGD(
         model.parameters(),
         lr=args.lr,
         momentum=args.momentum,
         weight_decay=args.weight_decay
     )
-    if args.local_rank == 0:
-        logger.info("Optimizer:")
-        logger.info(optimizer)
+
     if args.fp16:
-        optimizer = FP16_Optimizer(optimizer,
-                            static_loss_scale=args.static_loss_scale,
-                            dynamic_loss_scale=args.dynamic_loss_scale, verbose=False)
+        model, optimizer = amp.initialize(model, optimizer, opt_level="O2")
+
+    if args.local_rank == 0:
+        logger.info(optimizer)
+
     # records
     best_acc1 = 0
 
@@ -294,6 +292,7 @@ def main():
 
     if args.local_rank == 0:
         logger.info("Optimization done, ALL results saved to %s." % args.tmp)
+        logger.close()
 
 
 def train(train_loader, model, optimizer, lrscheduler, epoch):
@@ -323,7 +322,7 @@ def train(train_loader, model, optimizer, lrscheduler, epoch):
         reduced_loss = reduce_tensor(loss.data)
         acc1 = reduce_tensor(acc1)
         acc5 = reduce_tensor(acc5)
-        
+
         losses.update(reduced_loss.item(), data.size(0))
         top1.update(acc1.item(), data.size(0))
         top5.update(acc5.item(), data.size(0))
@@ -336,10 +335,10 @@ def train(train_loader, model, optimizer, lrscheduler, epoch):
 
         # compute gradient and do SGD step
         optimizer.zero_grad()
-        if args.fp16:
-            optimizer.backward(loss)
-        else:
-            loss.backward()
+
+        # scale loss before backward
+        with amp.scale_loss(loss, optimizer) as scaled_loss:
+            scaled_loss.backward()
 
         optimizer.step()
 
