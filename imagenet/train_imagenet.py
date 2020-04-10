@@ -323,7 +323,7 @@ def train(train_loader, model, optimizer, lrscheduler, epoch):
             tfboard_writer.add_scalar("train/iter-lr", lr, epoch*train_loader_len+i)
             tfboard_writer.add_scalar("train/iter-loss", losses.val, epoch*train_loader_len+i)
 
-            logger.info('Epoch[{0}/{1}] Iter[{2}/{3}]\t'
+            logger.info('Epoch[{0}/{1}] It[{2}/{3}]\t'
                   'Batch Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
                   'Data Time {data_time.val:.3f} ({data_time.avg:.3f})\t'
                   'Train Loss {loss.val:.3f} ({loss.avg:.3f})\t'
@@ -331,8 +331,7 @@ def train(train_loader, model, optimizer, lrscheduler, epoch):
                   'Prec@5 {top5.val:.3f} ({top5.avg:.3f})\t'
                   'LR: {lr:.2E}'.format(
                    epoch, args.epochs, i, train_loader_len,
-                   batch_time=batch_time, data_time=data_time, loss=losses, top1=top1, top5=top5,
-                   lr=lr))
+                   batch_time=batch_time, data_time=data_time, loss=losses, top1=top1, top5=top5, lr=lr))
 
     train_loader.reset()
 
