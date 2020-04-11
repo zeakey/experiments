@@ -10,6 +10,38 @@ def conv1x1(in_planes, out_planes, stride=1):
     """1x1 convolution"""
     return nn.Conv2d(in_planes, out_planes, kernel_size=1, stride=stride, bias=False)
 
+class BasicBlock(nn.Module):
+    expansion = 1
+
+    def __init__(self, inplanes, planes, stride=1):
+        super(BasicBlock, self).__init__()
+        self.bn1 = nn.BatchNorm2d(inplanes)
+        self.conv1 = nn.Conv2d(inplanes, planes, kernel_size=3, stride=stride, padding=1, bias=False)
+
+        self.bn2 = nn.BatchNorm2d(planes)
+        self.conv2 = nn.Conv2d(planes, planes, kernel_size=3, padding=1, bias=False)
+
+        if stride != 1 or inplanes != self.expansion * planes:
+            self.downsample = nn.Conv2d(inplanes, self.expansion*planes, kernel_size=1, stride=stride, bias=False)
+
+        self.stride = stride
+
+    def forward(self, x):
+        residual = x
+        out = self.bn1(x)
+        out = F.relu(out)
+        if hasattr(self, 'downsample'):
+            residual = self.downsample(out)
+        out = self.conv1(out)
+
+        out = self.bn2(out)
+        out = F.relu(out, inplace=True)
+        out = self.conv2(out)
+
+        out += residual
+
+        return out
+
 class Bottleneck(nn.Module):
     expansion = 4
 
@@ -115,6 +147,13 @@ class ResNet(nn.Module):
 
         return x
 
+def resnet18(pretrained=False, **kwargs):
+    model = ResNet(BasicBlock, [2, 2, 2, 2], **kwargs)
+    return model
+
+def resnet34(pretrained=False, **kwargs):
+    model = ResNet(BasicBlock, [3, 4, 6, 3], **kwargs)
+    return model
 
 def resnet50(pretrained=False, **kwargs):
     model = ResNet(Bottleneck, [3, 4, 6, 3], **kwargs)
@@ -123,3 +162,18 @@ def resnet50(pretrained=False, **kwargs):
 def resnet101(pretrained=False, **kwargs):
     model = ResNet(Bottleneck, [3, 4, 23, 3], **kwargs)
     return model
+
+
+if __name__ == "__main__":
+    data = torch.zeros(1, 3, 224, 224)
+    model = resnet18()
+    y = model(data)
+
+    model = resnet34()
+    y = model(data)
+
+    model = resnet50()
+    y = model(data)
+
+    model = resnet101()
+    y = model(data)
