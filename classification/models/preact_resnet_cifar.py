@@ -43,7 +43,7 @@ class Bottleneck(nn.Module):
         return out
 
 class Resnet(nn.Module):
-    def __init__(self, depth=164, dataset='cifar10', cfg=None):
+    def __init__(self, depth=164, num_classes=10, cfg=None):
         super(Resnet, self).__init__()
         assert (depth - 2) % 9 == 0, 'depth should be 9n+2'
 
@@ -65,19 +65,14 @@ class Resnet(nn.Module):
         self.bn = nn.BatchNorm2d(64 * block.expansion)
         self.relu = nn.ReLU(inplace=True)
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
-
-        if dataset == 'cifar10':
-            self.fc = nn.Linear(cfg[-1], 10)
-        elif dataset == 'cifar100':
-            self.fc = nn.Linear(cfg[-1], 100)
+        self.fc = nn.Linear(cfg[-1], num_classes)
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
-                n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
-                m.weight.data.normal_(0, math.sqrt(2. / n))
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
             elif isinstance(m, nn.BatchNorm2d):
-                m.weight.data.fill_(0.5)
-                m.bias.data.zero_()
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
 
     def _make_layer(self, block, planes, blocks, cfg, stride=1):
         downsample = None
