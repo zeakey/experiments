@@ -9,7 +9,7 @@ import numpy as np
 import os, sys, argparse, time, shutil
 from os.path import join, split, isdir, isfile, dirname, abspath
 from torch.utils.tensorboard import SummaryWriter
-from vlkit.training import Logger
+from vlkit.training import Logger, run_path
 from vlkit import image as vlimage
 from vlkit.pytorch import save_checkpoint, AverageMeter, accuracy
 from vlkit.pytorch.datasets import ilsvrc2012
@@ -71,6 +71,7 @@ parser.add_argument('--dali-cpu', action='store_true',
                     help='Runs CPU based version of DALI pipeline.')
 # debug
 args = parser.parse_args()
+args.tmp = run_path(args.tmp)
 os.makedirs(args.tmp, exist_ok=True)
 args.milestones = [int(i) for i in args.milestones.split(',')]
 
