@@ -145,7 +145,7 @@ class HybridValPipe(Pipeline):
         images = self.decode(self.jpegs)
         images = self.res(images)
         output = self.cmnp(images)
-        return [output, self.labels]  
+        return [output, self.labels]
 
 # loss function
 criterion = torch.nn.CrossEntropyLoss()
