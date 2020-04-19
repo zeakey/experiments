@@ -55,6 +55,9 @@ parser.add_argument('--resume', default="", type=str, metavar='PATH',
                     help='path to latest checkpoint')
 parser.add_argument('--tmp', help='tmp folder', default="tmp/pre-resnet50")
 parser.add_argument('--pretrained', help='pretrained model', type=str, default=None)
+# Loss function
+parser.add_argument('--loss', help='loss function', type=str, default="ce")
+parser.add_argument('--floss-beta', help='floss beta', type=float, default=1)
 # FP16
 parser.add_argument('--fp16', action='store_true',
                     help='Runs CPU based version of DALI pipeline.')
@@ -83,7 +86,6 @@ if args.fp16:
 if args.local_rank == 0:
     tfboard_writer = writer = SummaryWriter(log_dir=args.tmp)
     logger = get_logger(join(args.tmp, "log.txt"))
-    print(args.local_rank)
 
 args.distributed = False
 if 'WORLD_SIZE' in os.environ:
@@ -92,7 +94,12 @@ if 'WORLD_SIZE' in os.environ:
 if args.fp16:
     assert torch.backends.cudnn.enabled, "fp16 mode requires cudnn backend to be enabled."
 
-criterion = torch.nn.BCEWithLogitsLoss()
+if args.loss == "ce":
+    criterion = torch.nn.BCEWithLogitsLoss()
+elif args.loss == "floss":
+    criterion = FLoss(beta=args.floss_beta)
+
+
 def main():
     if args.local_rank == 0:
         logger.info(args)
@@ -104,8 +111,8 @@ def main():
                                              init_method='env://')
         args.world_size = torch.distributed.get_world_size()
 
-    normalize = transforms.Normalize(mean=[0,0,0],
-                                     std=[1,1,1])
+    normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                     std=[0.229, 0.224, 0.225])
     image_transform = transforms.Compose([transforms.Resize([args.imsize]*2), transforms.ToTensor(), normalize])
     label_transform = transforms.Compose([transforms.Resize([args.imsize]*2, interpolation=Image.NEAREST), transforms.ToTensor()])
     train_dataset = SODDataset(img_dir="/media/ssd0/deep-usps-data/01_img/",
@@ -116,10 +123,16 @@ def main():
                                     "/media/ssd0/deep-usps-data/06_rbd/"],
                         name_list="/home/kai/Code1/deep-usps/Parameters/train_names.txt",
                         flip=True, image_transform=image_transform, label_transform=label_transform)
+
+    if args.distributed:
+        train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
+    else:
+        train_sampler = None
+
     train_loader = torch.utils.data.DataLoader(
         train_dataset,
-        batch_size=args.batch_size, shuffle=True, num_workers=4,
-        pin_memory=True, drop_last=True)
+        batch_size=args.batch_size, shuffle=(train_sampler is None), num_workers=4,
+        pin_memory=True, drop_last=True, sampler=train_sampler)
 
     val_dataset = SODDataset(img_dir="/media/ssd0/deep-usps-data/01_img/",
                     label_dirs=["/media/ssd0/deep-usps-data/02_gt/"],
@@ -134,6 +147,11 @@ def main():
 
     # model and optimizer
     model = DRNSeg(args.arch, classes=1)
+
+    # add model graph
+    if args.local_rank == 0:
+        tfboard_writer.add_graph(model, torch.zeros(1, 3, args.imsize, args.imsize))
+
     if args.pretrained is not None:
         assert isfile(args.pretrained)
         load_dict = torch.load(args.pretrained)
@@ -195,6 +213,8 @@ def main():
                    milestones=args.milestones, gamma=args.gamma, warmup_epochs=args.warmup_epochs)
 
     for epoch in range(args.start_epoch, args.epochs):
+        if args.distributed:
+            train_sampler.set_epoch(epoch)
         # train and evaluate
         loss = train(train_loader, model, optimizer, scheduler, epoch)
         mae = validate(val_loader, model, epoch)
@@ -229,6 +249,7 @@ def main():
 
     if args.local_rank == 0:
         logger.info("Optimization done, ALL results saved to %s." % args.tmp)
+        tfboard_writer.close()
         for h in logger.handlers:
             h.close()
 
@@ -256,7 +277,10 @@ def train(train_loader, model, optimizer, lrscheduler, epoch):
         output = model(data)
         loss = criterion(output, gt)
 
-        reduced_loss = reduce_tensor(loss.data)
+        if args.distributed:
+            reduced_loss = reduce_tensor(loss.data)
+        else:
+            reduced_loss = loss.data
 
         losses.update(reduced_loss.item(), data.size(0))
 
@@ -279,6 +303,7 @@ def train(train_loader, model, optimizer, lrscheduler, epoch):
 
         optimizer.step()
 
+        torch.cuda.synchronize()
         # measure elapsed time
         batch_time.update(time.time() - end)
         end = time.time()
@@ -296,6 +321,12 @@ def train(train_loader, model, optimizer, lrscheduler, epoch):
                   'LR: {lr:.2E}'.format(
                    epoch, args.epochs, i, train_loader_len,
                    batch_time=batch_time, data_time=data_time, loss=losses, lr=lr))
+
+        if args.local_rank == 0 and i == 0:
+            data = torchvision.utils.make_grid(data, normalize=True)
+            pred = torchvision.utils.make_grid(torch.sigmoid(output), normalize=True)
+            tfboard_writer.add_image("images", data, epoch)
+            tfboard_writer.add_image("predictions", pred, epoch)
 
     return losses.avg
 
@@ -324,6 +355,7 @@ def validate(val_loader, model, epoch):
                 reduced_loss = reduce_tensor(loss.data)
                 reduced_mae = reduce_tensor(mae_)
             else:
+                reduced_loss = loss.data
                 reduced_mae = mae_.data
 
             losses.update(reduced_loss.item(), data.size(0))
@@ -338,8 +370,9 @@ def validate(val_loader, model, epoch):
                       'MAE {mae.val:.3f} (avg={mae.avg:.3f})'.format(
                        i, val_loader_len, loss=losses, mae=mae))
 
-    if args.local_rank == 0:
-        logger.info(' * MAE {mae.avg:.5f}'.format(mae=mae))
+    # if args.local_rank == 0:
+    #     logger.info(' * MAE {mae.avg:.5f}'.format(mae=mae))
+    print("mae=%f"%mae.avg)
 
     return mae.avg
 
