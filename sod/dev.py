@@ -179,7 +179,7 @@ def main():
         mae = validate(val_loader, model, epoch)
 
         # # remember best prec@1 and save checkpoint
-        is_best = mae > best_mae
+        is_best = mae < best_mae
         if is_best:
             best_mae = mae
 
@@ -208,7 +208,6 @@ def main():
 
     if args.local_rank == 0:
         logger.info("Optimization done, ALL results saved to %s." % args.tmp)
-        logger.close()
 
 
 def train(train_loader, model, optimizer, lrscheduler, epoch):
