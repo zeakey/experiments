@@ -16,11 +16,6 @@ from vlkit.pytorch import save_checkpoint, AverageMeter, accuracy
 from vlkit.pytorch.datasets import ilsvrc2012
 import vlkit.pytorch as vlpytorch
 from vlkit.lr import CosAnnealingLR, MultiStepLR
-# DALI data reader
-from nvidia.dali.pipeline import Pipeline
-import nvidia.dali.ops as ops
-import nvidia.dali.types as types
-from nvidia.dali.plugin.pytorch import DALIClassificationIterator
 # distributed
 import torch.distributed as dist
 import apex
@@ -72,12 +67,12 @@ parser.add_argument('--dynamic-loss-scale', action='store_true',
 parser.add_argument("--local_rank", default=0, type=int)
 parser.add_argument('--sync-bn', action='store_true',
                     help='Use sync BN.')
-
-# debug
 args = parser.parse_args()
+
+args.tmp = run_path(args.tmp)
 if args.local_rank == 0:
-    args.tmp = run_path(args.tmp)
-os.makedirs(args.tmp, exist_ok=True)
+    os.makedirs(args.tmp, exist_ok=True)
+
 args.milestones = [int(i) for i in args.milestones.split(',')]
 
 torch.backends.cudnn.benchmark = True
@@ -353,6 +348,24 @@ def reduce_tensor(tensor):
     dist.all_reduce(rt, op=dist.ReduceOp.SUM)
     rt /= args.world_size
     return rt
+
+class FLoss(nn.Module):
+    def __init__(self, beta=0.3, log_like=False):
+        super(FLoss, self).__init__()
+        self.beta = beta
+        self.log_like = log_like
+
+    def forward(self, prediction, target):
+        EPS = 1e-10
+        N = prediction.size(0)
+        TP = (prediction * target).view(N, -1).sum(dim=1)
+        H = self.beta * target.view(N, -1).sum(dim=1) + prediction.view(N, -1).sum(dim=1)
+        fmeasure = (1 + self.beta) * TP / (H + EPS)
+        if self.log_like:
+            floss = -torch.log(fmeasure)
+        else:
+            floss  = (1 - fmeasure)
+        return floss
 
 if __name__ == '__main__':
     main()
