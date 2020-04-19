@@ -23,6 +23,7 @@ import nvidia.dali.types as types
 from nvidia.dali.plugin.pytorch import DALIClassificationIterator
 # distributed
 import torch.distributed as dist
+import apex
 from apex.parallel import DistributedDataParallel as DDP
 import warnings
 warnings.filterwarnings("ignore", "(Possibly )?corrupt EXIF data", UserWarning)
@@ -34,7 +35,7 @@ parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                     help='manual epoch number (useful on restarts)')
 parser.add_argument('--print-freq', default=5, type=int,
                     metavar='N', help='print frequency (default: 10)')
-parser.add_argument('--arch', '--a', metavar='STR', default="torchvision.models.resnet.resnet50", help='model')
+parser.add_argument('--arch', '--a', metavar='STR', default="drn_d_105", help='model')
 # data
 parser.add_argument('--data', metavar='DIR', default=None, help='path to dataset')
 parser.add_argument('--use-rec', action='store_true', help='Use mxnet record.')
@@ -58,6 +59,7 @@ parser.add_argument('--weight-decay', '--wd', default=1e-4, type=float,
 parser.add_argument('--resume', default="", type=str, metavar='PATH',
                     help='path to latest checkpoint')
 parser.add_argument('--tmp', help='tmp folder', default="tmp/pre-resnet50")
+parser.add_argument('--pretrained', help='pretrained model', type=str, default=None)
 # FP16
 parser.add_argument('--fp16', action='store_true',
                     help='Runs CPU based version of DALI pipeline.')
@@ -68,8 +70,9 @@ parser.add_argument('--dynamic-loss-scale', action='store_true',
                     '--static-loss-scale.')
 # distributed
 parser.add_argument("--local_rank", default=0, type=int)
-parser.add_argument('--dali-cpu', action='store_true',
-                    help='Runs CPU based version of DALI pipeline.')
+parser.add_argument('--sync-bn', action='store_true',
+                    help='Use sync BN.')
+
 # debug
 args = parser.parse_args()
 if args.local_rank == 0:
@@ -135,7 +138,27 @@ def main():
     train_loader_len = len(train_loader)
 
     # model and optimizer
-    model = DRNSeg("drn_d_22", classes=1).cuda()
+    model = DRNSeg(args.arch, classes=1)
+    if args.pretrained is not None:
+        assert isfile(args.pretrained)
+        load_dict = torch.load(args.pretrained)
+        own_dict=model.state_dict()
+        for name, param in load_dict.items():
+            if name not in own_dict:
+                if args.local_rank == 0:
+                    logger.info('Parameter %s not found in own model.'%name)
+                continue
+            if own_dict[name].size() != load_dict[name].size():
+                if args.local_rank == 0:
+                    logger.info('Parameter shape does not match: {} ({} vs. {}).'.format(name, own_dict[name].size(), load_dict[name].size()))
+            else:
+                own_dict[name].copy_(param)
+    if args.sync_bn:
+        if args.local_rank == 0:
+            logger.info("using apex synced BN")
+        model = apex.parallel.convert_syncbn_model(model)
+
+    model = model.cuda()
     optimizer = torch.optim.SGD(
         model.parameters(),
         lr=args.lr,
@@ -146,11 +169,14 @@ def main():
     if args.fp16:
         model, optimizer = amp.initialize(model, optimizer, opt_level="O2")
 
+    if args.distributed:
+        model = DDP(model, delay_allreduce=True)
+
     if args.local_rank == 0:
         logger.info(optimizer)
 
     # records
-    best_mae = 0
+    best_mae = 10000
 
     # optionally resume from a checkpoint
     if args.resume:
@@ -208,6 +234,8 @@ def main():
 
     if args.local_rank == 0:
         logger.info("Optimization done, ALL results saved to %s." % args.tmp)
+        for h in logger.handlers:
+            h.close()
 
 
 def train(train_loader, model, optimizer, lrscheduler, epoch):
