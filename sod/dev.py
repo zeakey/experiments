@@ -54,7 +54,7 @@ parser.add_argument('--weight-decay', '--wd', default=1e-4, type=float,
 parser.add_argument('--resume', default="", type=str, metavar='PATH',
                     help='path to latest checkpoint')
 parser.add_argument('--tmp', help='tmp folder', default="tmp/pre-resnet50")
-parser.add_argument('--pretrained', help='pretrained model', type=str, default=None)
+parser.add_argument('--pretrained', help='pretrained model', type=str, default="Pretrained_Models/drn_pretraining/drn-d-105_ms_cityscapes.pth")
 # Loss function
 parser.add_argument('--loss', help='loss function', type=str, default="ce")
 parser.add_argument('--floss-beta', help='floss beta', type=float, default=1)
