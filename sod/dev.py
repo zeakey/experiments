@@ -209,7 +209,7 @@ def main():
             if args.local_rank == 0:
                 logger.info("=> no checkpoint found at '{}'".format(args.resume))
 
-    scheduler = MultiStepLR(loader_len=train_loader_len,
+    scheduler = MultiStepLR(loader_len=train_loader_len, base_lr=args.lr,
                    milestones=args.milestones, gamma=args.gamma, warmup_epochs=args.warmup_epochs)
 
     for epoch in range(args.start_epoch, args.epochs):
