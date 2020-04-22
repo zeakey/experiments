@@ -80,9 +80,6 @@ args.milestones = [int(i) for i in args.milestones.split(',')]
 
 torch.backends.cudnn.benchmark = True
 
-if args.fp16:
-    from apex import amp
-
 if args.local_rank == 0:
     tfboard_writer = writer = SummaryWriter(log_dir=args.tmp)
     logger = get_logger(join(args.tmp, "log.txt"))
@@ -92,6 +89,8 @@ if 'WORLD_SIZE' in os.environ:
     args.distributed = int(os.environ['WORLD_SIZE']) > 1
 
 if args.fp16:
+    from apex import amp
+    assert args.distributed, "FP16 can be only used in Distributed mode"
     assert torch.backends.cudnn.enabled, "fp16 mode requires cudnn backend to be enabled."
 
 if args.loss == "ce":
@@ -115,6 +114,7 @@ def main():
                                      std=[0.229, 0.224, 0.225])
     image_transform = transforms.Compose([transforms.Resize([args.imsize]*2), transforms.ToTensor(), normalize])
     label_transform = transforms.Compose([transforms.Resize([args.imsize]*2, interpolation=Image.NEAREST), transforms.ToTensor()])
+
     train_dataset = SODDataset(img_dir="/media/ssd0/deep-usps-data/01_img/",
                         label_dirs=["/media/ssd0/deep-usps-data/02_gt/",
                                     "/media/ssd0/deep-usps-data/03_mc/",
@@ -124,24 +124,34 @@ def main():
                         name_list="/home/kai/Code1/deep-usps/Parameters/train_names.txt",
                         flip=True, image_transform=image_transform, label_transform=label_transform)
 
+    test_dataset = SODDataset(img_dir="/media/ssd0/deep-usps-data/01_img/",
+                    label_dirs=["/media/ssd0/deep-usps-data/02_gt/"],
+                    name_list="/home/kai/Code1/deep-usps/Parameters/test_names.txt",
+                    flip=False, image_transform=image_transform, label_transform=label_transform)
+
     if args.distributed:
         train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
+        val_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset, shuffle=False)
+        test_sampler = torch.utils.data.distributed.DistributedSampler(test_dataset, shuffle=False)
     else:
         train_sampler = None
+        val_sampler = None
+        test_sampler = None
 
     train_loader = torch.utils.data.DataLoader(
         train_dataset,
         batch_size=args.batch_size, shuffle=(train_sampler is None), num_workers=4,
         pin_memory=True, drop_last=True, sampler=train_sampler)
 
-    val_dataset = SODDataset(img_dir="/media/ssd0/deep-usps-data/01_img/",
-                    label_dirs=["/media/ssd0/deep-usps-data/02_gt/"],
-                    name_list="/home/kai/Code1/deep-usps/Parameters/test_names.txt",
-                    flip=False, image_transform=image_transform, label_transform=label_transform)
     val_loader = torch.utils.data.DataLoader(
-        val_dataset,
+        train_dataset,
+        batch_size=args.batch_size, shuffle=(train_sampler is None), num_workers=4,
+        pin_memory=True, drop_last=True, sampler=val_sampler)
+
+    test_loader = torch.utils.data.DataLoader(
+        test_dataset,
         batch_size=100, shuffle=False, num_workers=4,
-        pin_memory=True, drop_last=False)
+        pin_memory=True, drop_last=False, sampler=test_sampler)
 
     train_loader_len = len(train_loader)
 
@@ -184,6 +194,8 @@ def main():
 
     if args.distributed:
         model = DDP(model, delay_allreduce=True)
+    else:
+        model = torch.nn.DataParallel(model)
 
     if args.local_rank == 0:
         logger.info(optimizer)
@@ -215,9 +227,10 @@ def main():
     for epoch in range(args.start_epoch, args.epochs):
         if args.distributed:
             train_sampler.set_epoch(epoch)
+
         # train and evaluate
         loss = train(train_loader, model, optimizer, scheduler, epoch)
-        mae = validate(val_loader, model, epoch)
+        mae = test(test_loader, model, epoch)
 
         # # remember best prec@1 and save checkpoint
         is_best = mae < best_mae
@@ -253,6 +266,10 @@ def main():
         for h in logger.handlers:
             h.close()
 
+threshold = {
+    "mc": 0.31,
+    "hs": 0.36
+}
 
 def train(train_loader, model, optimizer, lrscheduler, epoch):
     batch_time = AverageMeter()
@@ -268,14 +285,20 @@ def train(train_loader, model, optimizer, lrscheduler, epoch):
     end = time.time()
     for i, data in enumerate(train_loader):
         names = data.pop()
-        data = [d.cuda() for d in data]
+        # data = [d.cuda() for d in data]
         data, gt, mc, hs, drs, rbd = data
+
+        if args.distributed:
+            data = data.cuda(non_blocking=True)
+        mc = mc.cuda(non_blocking=True)
+        target = (mc>threshold["mc"])
 
         # measure data loading time
         data_time.update(time.time() - end)
-
         output = model(data)
-        loss = criterion(output, gt)
+
+        target = target.to(dtype=output.dtype)
+        loss = criterion(output, target)
 
         if args.distributed:
             reduced_loss = reduce_tensor(loss.data)
@@ -283,7 +306,6 @@ def train(train_loader, model, optimizer, lrscheduler, epoch):
             reduced_loss = loss.data
 
         losses.update(reduced_loss.item(), data.size(0))
-
 
         # compute and adjust lr
         if lrscheduler is not None:
@@ -303,7 +325,8 @@ def train(train_loader, model, optimizer, lrscheduler, epoch):
 
         optimizer.step()
 
-        torch.cuda.synchronize()
+        if args.distributed:
+            torch.cuda.synchronize()
         # measure elapsed time
         batch_time.update(time.time() - end)
         end = time.time()
@@ -330,17 +353,17 @@ def train(train_loader, model, optimizer, lrscheduler, epoch):
 
     return losses.avg
 
-def validate(val_loader, model, epoch):
+def test(test_loader, model, epoch):
     batch_time = AverageMeter()
     losses = AverageMeter()
     mae =  AverageMeter()
     # switch to evaluate mode
     model.eval()
-    val_loader_len = len(val_loader)
+    test_loader_len = len(test_loader)
 
     with torch.no_grad():
         end = time.time()
-        for i, data in enumerate(val_loader):
+        for i, data in enumerate(test_loader):
             names = data.pop()
             data = [d.cuda() for d in data]
             data, gt = data
@@ -368,11 +391,11 @@ def validate(val_loader, model, epoch):
                 logger.info('Test: [{0}/{1}]\t'
                       'Test Loss {loss.val:.3f} (avg={loss.avg:.3f})\t'
                       'MAE {mae.val:.3f} (avg={mae.avg:.3f})'.format(
-                       i, val_loader_len, loss=losses, mae=mae))
+                       i, test_loader_len, loss=losses, mae=mae))
 
-    # if args.local_rank == 0:
-    #     logger.info(' * MAE {mae.avg:.5f}'.format(mae=mae))
-    print("mae=%f"%mae.avg)
+
+    if args.local_rank == 0:
+        logger.info(' * MAE {mae.avg:.5f}'.format(mae=mae))
 
     return mae.avg
 
