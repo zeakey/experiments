@@ -24,6 +24,8 @@ import warnings
 warnings.filterwarnings("ignore", "(Possibly )?corrupt EXIF data", UserWarning)
 from drn_seg import DRNSeg
 from dataset import SODDataset
+from utils import save_maps, get_full_image_names, load_batch_images
+from crf import batch_crf
 
 parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
@@ -88,8 +90,10 @@ args.distributed = False
 if 'WORLD_SIZE' in os.environ:
     args.distributed = int(os.environ['WORLD_SIZE']) > 1
 
+DTYPE = torch.float
 if args.fp16:
     from apex import amp
+    DTYPE = torch.half
     assert args.distributed, "FP16 can be only used in Distributed mode"
     assert torch.backends.cudnn.enabled, "fp16 mode requires cudnn backend to be enabled."
 
@@ -229,8 +233,28 @@ def main():
             train_sampler.set_epoch(epoch)
 
         # train and evaluate
-        loss = train(train_loader, model, optimizer, scheduler, epoch)
+        loss, predictions, indice = train(train_loader, model, optimizer, scheduler, epoch)
         mae = test(test_loader, model, epoch)
+
+        if args.local_rank == 0:
+            logger.info("Saving predictions to %s" % join(args.tmp, "epoch-%d"%epoch, "predictions"))
+        assert predictions.min() >= 0 and predictions.max() <= 1
+        ordered_names = np.array(train_dataset.get_item_names())[indice].tolist()
+
+        save_maps(maps=(predictions*255).astype(np.uint8), names=ordered_names, dir=join(args.tmp, "epoch-%d"%epoch, "predictions"))
+
+        full_image_names = get_full_image_names(train_dataset.img_dir, names=ordered_names, ext=".jpg", warn_exist=True)
+        images = load_batch_images(full_image_names, H=args.imsize, W=args.imsize)
+
+        if args.local_rank == 0:
+            logger.info("Applying crf to predictions (results saved to %s)" % join(args.tmp, "epoch-%d"%epoch, "crf"))
+        crf_results = batch_crf(images, predictions)
+        save_maps(maps=(crf_results*255).astype(np.uint8), names=ordered_names, dir=join(args.tmp, "epoch-%d"%epoch, "crf"), ext=".png")
+
+        crf_results3 = (np.repeat(crf_results, axis=1, repeats=3)*255).astype(np.uint8)
+        predictions3 = (np.repeat(predictions, axis=1, repeats=3)*255).astype(np.uint8)
+        crf_results3 = np.concatenate((images, predictions3, crf_results3), axis=3)
+        save_maps(maps=crf_results3, names=ordered_names, dir=join(args.tmp, "epoch-%d"%epoch, "crf"), ext=".jpg")
 
         # # remember best prec@1 and save checkpoint
         is_best = mae < best_mae
@@ -271,6 +295,7 @@ threshold = {
     "hs": 0.36
 }
 
+
 def train(train_loader, model, optimizer, lrscheduler, epoch):
     batch_time = AverageMeter()
     data_time = AverageMeter()
@@ -282,20 +307,28 @@ def train(train_loader, model, optimizer, lrscheduler, epoch):
     # switch to train mode
     model.train()
 
+    # make sure length of the dataset is divideable by number of GPUs.
+    predictions = torch.zeros(len(train_loader.dataset)//args.world_size, 1, args.imsize, args.imsize, dtype=DTYPE).cuda()
+    indice = torch.zeros(len(train_loader.dataset)//args.world_size, dtype=torch.long).cuda()
+
+    cursor = 0
     end = time.time()
     for i, data in enumerate(train_loader):
-        names = data.pop()
         # data = [d.cuda() for d in data]
-        data, gt, mc, hs, drs, rbd = data
-
+        data, gt, mc, hs, drs, rbd, idx = data
         if args.distributed:
-            data = data.cuda(non_blocking=True)
+            data = data.cuda(non_blocking=True).to(dtype=DTYPE)
+        idx = idx.cuda().to(dtype=torch.long)
         mc = mc.cuda(non_blocking=True)
-        target = (mc>threshold["mc"])
+        target = mc>threshold["mc"]
 
         # measure data loading time
         data_time.update(time.time() - end)
         output = model(data)
+
+        pred = torch.sigmoid(output.detach()).to(dtype=DTYPE)
+        predictions[cursor:cursor+data.shape[0]] = pred
+        indice[cursor:cursor+data.shape[0]] = idx
 
         target = target.to(dtype=output.dtype)
         loss = criterion(output, target)
@@ -330,6 +363,7 @@ def train(train_loader, model, optimizer, lrscheduler, epoch):
         # measure elapsed time
         batch_time.update(time.time() - end)
         end = time.time()
+        cursor += data.shape[0]
 
         lr = optimizer.param_groups[0]["lr"]
 
@@ -351,7 +385,7 @@ def train(train_loader, model, optimizer, lrscheduler, epoch):
             tfboard_writer.add_image("images", data, epoch)
             tfboard_writer.add_image("predictions", pred, epoch)
 
-    return losses.avg
+    return losses.avg, predictions.cpu().numpy(), indice.cpu().numpy()
 
 def test(test_loader, model, epoch):
     batch_time = AverageMeter()

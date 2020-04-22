@@ -28,7 +28,7 @@ def get_full_image_names(dir, names, ext=".jpg", warn_exist=False):
 def save_maps(maps, names, dir, ext=".png"):
     assert isinstance(maps, np.ndarray)
     assert isinstance(names, list)
-    assert maps.dtype == np.uint8
+    assert maps.dtype == np.uint8 and maps.ndim == 4
     assert ext.startswith("."), "%s is not a valid extension" % ext
     assert maps.shape[1] == 1 or maps.shape[1] == 3, "maps shape: {}".format(maps.shape)
     os.makedirs(dir, exist_ok=True)

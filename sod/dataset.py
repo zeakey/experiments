@@ -15,16 +15,16 @@ class SODDataset(torch.utils.data.Dataset):
         self.flip = flip
         self.image_transform = image_transform
         self.label_transform = label_transform
-        self.item_names = [line.strip() for line in open(name_list, 'r')]
+        self.__item_names = [line.strip() for line in open(name_list, 'r')]
 
     def __getitem__(self, index):
-        assert isfile(join(self.img_dir, self.item_names[index]+".jpg"))
-        img = Image.open(join(self.img_dir, self.item_names[index]+".jpg"))
+        assert isfile(join(self.img_dir, self.__item_names[index]+".jpg"))
+        img = Image.open(join(self.img_dir, self.__item_names[index]+".jpg"))
 
         labels = []
         for label_dir in self.label_dirs:
-            assert isfile(join(label_dir, self.item_names[index]+".png"))
-            labels.append(Image.open(join(label_dir, self.item_names[index]+".png")))
+            assert isfile(join(label_dir, self.__item_names[index]+".png"))
+            labels.append(Image.open(join(label_dir, self.__item_names[index]+".png")))
 
         if self.flip and np.random.rand() > 0.5:
             img = img.transpose(Image.FLIP_LEFT_RIGHT)
@@ -35,7 +35,7 @@ class SODDataset(torch.utils.data.Dataset):
         if self.label_transform:
             labels = [self.label_transform(l) for l in labels]
 
-        return tuple([img]+labels+[self.item_names[index]])
+        return tuple([img]+labels+[index])
 
         # data = [Image.open(join(self.data_dir, self.image_list[index]))]
         # if self.GTlabel_list is not None:
@@ -56,4 +56,7 @@ class SODDataset(torch.utils.data.Dataset):
         # return tuple(data)
 
     def __len__(self):
-        return len(self.item_names)
+        return len(self.__item_names)
+
+    def get_item_names(self):
+        return self.__item_names
