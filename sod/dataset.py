@@ -59,4 +59,4 @@ class SODDataset(torch.utils.data.Dataset):
         return len(self.__item_names)
 
     def get_item_names(self):
-        return self.__item_names
+        return self.__item_names.copy()
