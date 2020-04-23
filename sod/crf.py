@@ -1,5 +1,8 @@
+import torch
 import numpy as np
 import pydensecrf.densecrf as dcrf
+from torch.utils.data.sampler import BatchSampler, SequentialSampler
+import time, sys
 
 def crf_single_image(image, state):
     """
@@ -61,5 +64,64 @@ def batch_crf(images, maps):
 
     return crf_prediction
 
+def par_batch_crf(images, maps):
+    """
+    multiprocessing parallel batch crf
+    """
 
+    crfed_maps = np.zeros_like(maps)
+    # do your tricks here
+
+    return crfed_maps
+
+class CRFDataset(torch.utils.data.Dataset):
+    def __init__(self, maps, images):
+        assert images.dtype == np.uint8, images.dtype
+        assert maps.shape[0] == images.shape[0]
+        assert maps.max() <= 1 and maps.min() >= 0
+
+        self.maps = maps
+        # [N C H W] -> [N H W C]
+        self.images = np.ascontiguousarray(images.transpose((0, 2, 3, 1)))
+
+    def __getitem__(self, index):
+        im = self.images[index]
+        state = np.squeeze(self.maps[index])
+        state = np.stack((1-state, state), axis=0)
+        crf = crf_single_image(im, state)
+
+        return crf, index
+
+    def __len__(self):
+        return self.images.shape[0]
+
+def par_batch_crf_dataloader(images, maps):
+    """
+    Using pytorch's parallel dataloader for parallel crf
+    """
+    crf_dataset = CRFDataset(maps, images=images)
+    batch_sampler = BatchSampler(SequentialSampler(crf_dataset), batch_size=10, drop_last=False)
+    crf_loader = torch.utils.data.DataLoader(
+         crf_dataset,
+         batch_sampler=batch_sampler,
+         shuffle=False,
+         num_workers= min(images.shape[0], 24),
+         pin_memory=True,
+         drop_last=False)
     
+    crfed_maps = np.zeros_like(maps)
+    for crf, indx in crf_loader:
+        crfed_maps[indx, 0] = crf
+
+    return crfed_maps
+
+if __name__ == "__main__":
+    images = (np.random.rand(400, 3, 432, 432)*255).astype(np.uint8)
+    maps = np.random.rand(400, 1, 432, 432)
+    start = time.time()
+    par_batch_crf_dataloader(images, maps)
+    print("par_batch_crf_dataloader: %f sec"%(time.time()-start))
+
+    start = time.time()
+    batch_crf(images, maps)
+    print("batch_crf: %f sec"%(time.time()-start))
