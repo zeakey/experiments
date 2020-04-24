@@ -3,6 +3,8 @@ import numpy as np
 import pydensecrf.densecrf as dcrf
 from torch.utils.data.sampler import BatchSampler, SequentialSampler
 import time, sys
+from concurrent.futures import ThreadPoolExecutor, wait, ALL_COMPLETED
+import multiprocessing
 
 def crf_single_image(image, state):
     """
@@ -54,25 +56,61 @@ def batch_crf(images, maps):
     images = images.transpose((0, 2, 3, 1))
     images = np.ascontiguousarray(images)
 
-    crf_prediction = np.zeros_like(maps)
+    crfed_maps = np.zeros_like(maps)
     for i in range(N):
         S = np.squeeze(state[i])
         I = np.squeeze(images[i])
 
         crfed = crf_single_image(I, S)
-        crf_prediction[i, ] = crfed
+        crfed_maps[i, ] = crfed
 
-    return crf_prediction
+    return crfed_maps
 
-def par_batch_crf(images, maps):
+def par_batch_crf(images, maps, num_works=12):
     """
     multiprocessing parallel batch crf
     """
+    assert isinstance(images, np.ndarray) and isinstance(maps, np.ndarray)
+    assert maps.min() <= 1 and maps.max() >= 0, "maps.min() %f v.s. maps.max() %f" % (maps.min(), maps.max())
+    assert images.ndim == 4 and maps.ndim == 4
+    N, _, H, W = images.shape
+    assert maps.shape == (N, 1, H, W)
+
+    assert maps.ndim == 4
+    state = np.concatenate((1-maps, maps), axis=1)
+    assert state.ndim == 4 and state.shape[1] == 2
+    state = np.ascontiguousarray(state)
+
+    images = images.transpose((0, 2, 3, 1))
+    images = np.ascontiguousarray(images)
 
     crfed_maps = np.zeros_like(maps)
-    # do your tricks here
+
+    def crf_thread(images, states, crfed_maps, work_length, start_pos):
+        for i in range(work_length):
+            S = np.squeeze(state[i])
+            I = np.squeeze(images[i])
+            t = time.time()
+            crfed = crf_single_image(I, S)
+            crfed_maps[i + start_pos, ] = crfed
+
+    offset = N // num_works
+    remain = N % num_works
+    threads = []
+    for i in range(num_works):
+        if i == num_works-1:
+            length = offset + remain
+        else:
+            length = offset
+        params = [images, state, crfed_maps, length, i*offset]
+        threads.append(multiprocessing.Process(target=crf_thread, args=(params)))
+    for i in range(num_works):
+        threads[i].start()
+    for i in range(num_works):
+        threads[i].join()
 
     return crfed_maps
+
 
 class CRFDataset(torch.utils.data.Dataset):
     def __init__(self, maps, images):
@@ -105,7 +143,7 @@ def par_batch_crf_dataloader(images, maps):
          crf_dataset,
          batch_sampler=batch_sampler,
          shuffle=False,
-         num_workers= min(images.shape[0], 24),
+         num_workers= min(images.shape[0], 12),
          pin_memory=True,
          drop_last=False)
     
@@ -116,11 +154,15 @@ def par_batch_crf_dataloader(images, maps):
     return crfed_maps
 
 if __name__ == "__main__":
-    images = (np.random.rand(400, 3, 432, 432)*255).astype(np.uint8)
-    maps = np.random.rand(400, 1, 432, 432)
+    images = (np.random.rand(100, 3, 432, 432)*255).astype(np.uint8)
+    maps = np.random.rand(100, 1, 432, 432)
     start = time.time()
     par_batch_crf_dataloader(images, maps)
     print("par_batch_crf_dataloader: %f sec"%(time.time()-start))
+
+    start = time.time()
+    par_batch_crf(images, maps)
+    print("par_batch_crf: %f sec"%(time.time()-start))
 
     start = time.time()
     batch_crf(images, maps)
