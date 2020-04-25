@@ -74,7 +74,7 @@ def par_batch_crf(images, maps, num_works=12):
     assert maps.min() <= 1 and maps.max() >= 0, "maps.min() %f v.s. maps.max() %f" % (maps.min(), maps.max())
     assert images.ndim == 4 and maps.ndim == 4
     N, _, H, W = images.shape
-    assert maps.shape == (N, 1, H, W)
+    assert maps.shape == (N, 1, H, W), maps.shape
 
     assert maps.ndim == 4
     state = np.concatenate((1-maps, maps), axis=1)
