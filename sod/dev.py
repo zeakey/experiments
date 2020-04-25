@@ -25,7 +25,8 @@ warnings.filterwarnings("ignore", "(Possibly )?corrupt EXIF data", UserWarning)
 from drn_seg import DRNSeg
 from dataset import SODDataset
 from utils import save_maps, get_full_image_names, load_batch_images
-from crf import batch_crf
+from crf import batch_crf, par_batch_crf
+
 
 parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
@@ -126,7 +127,7 @@ def main():
                                     "/media/ssd0/deep-usps-data/05_dsr/",
                                     "/media/ssd0/deep-usps-data/06_rbd/"],
                         name_list="/home/kai/Code1/deep-usps/Parameters/train_names.txt",
-                        flip=True, image_transform=image_transform, label_transform=label_transform)
+                        flip=False, image_transform=image_transform, label_transform=label_transform)
 
     test_dataset = SODDataset(img_dir="/media/ssd0/deep-usps-data/01_img/",
                     label_dirs=["/media/ssd0/deep-usps-data/02_gt/"],
@@ -236,27 +237,43 @@ def main():
         loss, predictions, indice = train(train_loader, model, optimizer, scheduler, epoch)
         mae = test(test_loader, model, epoch)
 
-        if args.local_rank == 0:
-            logger.info("Saving predictions to %s" % join(args.tmp, "epoch-%d"%epoch, "predictions"))
         assert predictions.min() >= 0 and predictions.max() <= 1
-        ordered_names = np.array(train_dataset.get_item_names())[indice].tolist()
+        assert predictions.shape[0] == indice.size, "predictions shape: {} v.s. indice size: {}".format(predictions.shape, indice.size)
 
-        save_maps(maps=(predictions*255).astype(np.uint8), names=ordered_names, dir=join(args.tmp, "epoch-%d"%epoch, "predictions"))
-
-        full_image_names = get_full_image_names(train_dataset.img_dir, names=ordered_names, ext=".jpg", warn_exist=True)
+        if args.local_rank == 0:
+            logger.info("Loading images...")
+        names = np.array(train_dataset.get_item_names())[indice].tolist()
+        full_image_names = get_full_image_names(train_dataset.img_dir, names=names, ext=".jpg", warn_exist=True)
         images = load_batch_images(full_image_names, H=args.imsize, W=args.imsize)
 
         if args.local_rank == 0:
+            logger.info("Saving predictions to %s" % join(args.tmp, "epoch-%d"%epoch, "predictions"))
+        save_maps(maps=(predictions*255).astype(np.uint8), names=names, dir=join(args.tmp, "epoch-%d"%epoch, "predictions"))
+
+        if args.local_rank == 0:
+            start = time.time()
             logger.info("Applying crf to predictions (results saved to %s)" % join(args.tmp, "epoch-%d"%epoch, "crf"))
-        crf_results = batch_crf(images, predictions)
-        save_maps(maps=(crf_results*255).astype(np.uint8), names=ordered_names, dir=join(args.tmp, "epoch-%d"%epoch, "crf"), ext=".png")
+        crf_results = par_batch_crf(images, predictions)
+        save_maps(maps=(crf_results*255).astype(np.uint8), names=names, dir=join(args.tmp, "epoch-%d"%epoch, "crf"), ext=".png")
+        if args.local_rank == 0:
+            logger.info("Done! (%f sec elapsed.)" % (time.time()-start))
 
         crf_results3 = (np.repeat(crf_results, axis=1, repeats=3)*255).astype(np.uint8)
         predictions3 = (np.repeat(predictions, axis=1, repeats=3)*255).astype(np.uint8)
         crf_results3 = np.concatenate((images, predictions3, crf_results3), axis=3)
-        save_maps(maps=crf_results3, names=ordered_names, dir=join(args.tmp, "epoch-%d"%epoch, "crf"), ext=".jpg")
+        save_maps(maps=crf_results3, names=names, dir=join(args.tmp, "epoch-%d"%epoch, "crf"), ext=".jpg")
 
-        # # remember best prec@1 and save checkpoint
+        mva_dir = join(args.tmp, "epoch-%d"%epoch, "mva-crf")
+        full_mva_names = get_full_image_names(mva_dir, names=names, ext=".png", warn_exist=False)
+        alpha = 0.7
+        if epoch == 0:
+            mva_crf = crf_results.copy()
+        else:
+            mva_crf = load_batch_images(full_mva_names, H=args.imsize, W=args.imsize)
+            mva_crf = alpha * mva_crf + (1 - alpha) *  crf_results
+        save_maps(maps=(mva_crf*255).astype(np.uint8), names=names, dir=mva_dir, ext=".png")
+
+
         is_best = mae < best_mae
         if is_best:
             best_mae = mae
@@ -307,11 +324,9 @@ def train(train_loader, model, optimizer, lrscheduler, epoch):
     # switch to train mode
     model.train()
 
-    # make sure length of the dataset is divideable by number of GPUs.
-    predictions = torch.zeros(len(train_loader.dataset)//args.world_size, 1, args.imsize, args.imsize, dtype=DTYPE).cuda()
-    indice = torch.zeros(len(train_loader.dataset)//args.world_size, dtype=torch.long).cuda()
+    predictions = torch.empty(0, 1, args.imsize, args.imsize, dtype=DTYPE).cuda()
+    indice = torch.empty(0, dtype=torch.long).cuda()
 
-    cursor = 0
     end = time.time()
     for i, data in enumerate(train_loader):
         # data = [d.cuda() for d in data]
@@ -326,9 +341,8 @@ def train(train_loader, model, optimizer, lrscheduler, epoch):
         data_time.update(time.time() - end)
         output = model(data)
 
-        pred = torch.sigmoid(output.detach()).to(dtype=DTYPE)
-        predictions[cursor:cursor+data.shape[0]] = pred
-        indice[cursor:cursor+data.shape[0]] = idx
+        predictions = torch.cat((predictions, torch.sigmoid(output.detach()).to(dtype=DTYPE)), dim=0)
+        indice = torch.cat((indice, idx), dim=0)
 
         target = target.to(dtype=output.dtype)
         loss = criterion(output, target)
@@ -363,7 +377,6 @@ def train(train_loader, model, optimizer, lrscheduler, epoch):
         # measure elapsed time
         batch_time.update(time.time() - end)
         end = time.time()
-        cursor += data.shape[0]
 
         lr = optimizer.param_groups[0]["lr"]
 
