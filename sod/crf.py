@@ -76,7 +76,7 @@ def crf_thread(images, states, work_length, start_pos, crf_prediction):
     return crf_prediction, start_pos, work_length
 
 
-def par_batch_crf(images, maps, num_works=4):
+def par_batch_crf(images, maps, num_workers=12):
     """
     multiprocessing parallel batch crf
     """
@@ -91,19 +91,20 @@ def par_batch_crf(images, maps, num_works=4):
     assert state.ndim == 4 and state.shape[1] == 2
     state = np.ascontiguousarray(state)
 
+    num_workers = min(images.shape[0], num_workers)
     images = images.transpose((0, 2, 3, 1))
     images = np.ascontiguousarray(images)
 
     crf_prediction = np.zeros_like(maps)
-    pool = multiprocessing.Pool(processes=num_works)
+    pool = multiprocessing.Pool(processes=num_workers)
 
-    offset = N // num_works
-    remain = N % num_works
-    #executor = ThreadPoolExecutor(max_workers=num_works)
+    offset = N // num_workers
+    remain = N % num_workers
+    #executor = ThreadPoolExecutor(max_num_workers=num_workers)
     threads = []
     result = []
-    for i in range(num_works):
-        if i == num_works-1:
+    for i in range(num_workers):
+        if i == num_workers-1:
             length = offset + remain
         else:
             length = offset
@@ -140,7 +141,7 @@ class CRFDataset(torch.utils.data.Dataset):
     def __len__(self):
         return self.images.shape[0]
 
-def par_batch_crf_dataloader(images, maps):
+def par_batch_crf_dataloader(images, maps, num_workers=12):
     """
     Using pytorch's parallel dataloader for parallel crf
     """
@@ -150,7 +151,7 @@ def par_batch_crf_dataloader(images, maps):
          crf_dataset,
          batch_sampler=batch_sampler,
          shuffle=False,
-         num_workers= min(images.shape[0], 12),
+         num_workers= min(images.shape[0], num_workers),
          pin_memory=True,
          drop_last=False)
     
