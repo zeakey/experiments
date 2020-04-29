@@ -66,7 +66,17 @@ def batch_crf(images, maps):
 
     return crfed_maps
 
-def par_batch_crf(images, maps, num_works=12):
+def crf_thread(images, states, work_length, start_pos, crf_prediction):
+    for i in range(work_length):
+        S = np.squeeze(states[i])
+        I = np.squeeze(images[i])
+        t = time.time()
+        crfed = crf_single_image(I, S)
+        crf_prediction[i + start_pos, ] = crfed
+    return crf_prediction, start_pos, work_length
+
+
+def par_batch_crf(images, maps, num_works=4):
     """
     multiprocessing parallel batch crf
     """
@@ -74,7 +84,7 @@ def par_batch_crf(images, maps, num_works=12):
     assert maps.min() <= 1 and maps.max() >= 0, "maps.min() %f v.s. maps.max() %f" % (maps.min(), maps.max())
     assert images.ndim == 4 and maps.ndim == 4
     N, _, H, W = images.shape
-    assert maps.shape == (N, 1, H, W), maps.shape
+    assert maps.shape == (N, 1, H, W)
 
     assert maps.ndim == 4
     state = np.concatenate((1-maps, maps), axis=1)
@@ -84,32 +94,29 @@ def par_batch_crf(images, maps, num_works=12):
     images = images.transpose((0, 2, 3, 1))
     images = np.ascontiguousarray(images)
 
-    crfed_maps = np.zeros_like(maps)
-
-    def crf_thread(images, states, crfed_maps, work_length, start_pos):
-        for i in range(work_length):
-            S = np.squeeze(state[i])
-            I = np.squeeze(images[i])
-            t = time.time()
-            crfed = crf_single_image(I, S)
-            crfed_maps[i + start_pos, ] = crfed
+    crf_prediction = np.zeros_like(maps)
+    pool = multiprocessing.Pool(processes=num_works)
 
     offset = N // num_works
     remain = N % num_works
+    #executor = ThreadPoolExecutor(max_workers=num_works)
     threads = []
+    result = []
     for i in range(num_works):
         if i == num_works-1:
             length = offset + remain
         else:
             length = offset
-        params = [images, state, crfed_maps, length, i*offset]
-        threads.append(multiprocessing.Process(target=crf_thread, args=(params)))
-    for i in range(num_works):
-        threads[i].start()
-    for i in range(num_works):
-        threads[i].join()
+        result.append(pool.apply_async(crf_thread, args=(images, state, length, i*offset, crf_prediction)))
 
-    return crfed_maps
+    pool.close()
+    pool.join()
+
+    for res in result:
+        pred, start, length = res.get()
+        crf_prediction[start:start+length, ] = pred[start:start+length, ]
+
+    return crf_prediction
 
 
 class CRFDataset(torch.utils.data.Dataset):
