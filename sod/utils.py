@@ -9,9 +9,13 @@ def load_batch_images(names, H=432, W=432):
     images = np.zeros((len(names), 3, H, W), dtype=np.uint8)
     for idx, n in enumerate(names):
         assert isfile(n), n
-        im = Image.open(n).convert("RGB").resize((W, H))
-        im = np.array(im, dtype=np.uint8)
-        images[idx, :, :, :] = im.transpose((2, 0, 1))
+        im = Image.open(n).resize((W, H))
+        if im.mode == "RGB":
+            im = np.array(im, dtype=np.uint8)
+            images[idx, :, :, :] = im.transpose((2, 0, 1))
+        else:
+            images[idx, 0, :, :] = np.array(im, dtype=np.uint8)
+
     return images
 
 def get_full_image_names(dir, names, ext=".jpg", warn_exist=False):
