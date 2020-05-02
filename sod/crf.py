@@ -13,6 +13,7 @@ def crf_single_image(image, state):
     """
     assert isinstance(state, np.ndarray)
     assert isinstance(image, np.ndarray)
+    assert state.dtype == np.float32
     assert state.ndim == 3, "state shape {}".format(state.shape)
     assert state.max() <= 1 and state.min() >= 0, "state.min()=%f, state.max()=%f"%(state.min(), state.max())
 
@@ -27,7 +28,7 @@ def crf_single_image(image, state):
     d = dcrf.DenseCRF2D(W, H, 2)
 
     with np.errstate(divide='ignore', invalid='ignore'):
-        d.setUnaryEnergy(-np.log(state.reshape(2, H*W).astype(np.float32)))
+        d.setUnaryEnergy(-np.log(state.reshape(2, H*W)))
 
     d.addPairwiseGaussian(sxy=(3, 3), compat=3, kernel=dcrf.DIAG_KERNEL, normalization=dcrf.NORMALIZE_SYMMETRIC)
     d.addPairwiseBilateral(sxy=(80, 80), srgb=(13, 13, 13), rgbim=image, compat=10, kernel=dcrf.DIAG_KERNEL, normalization=dcrf.NORMALIZE_SYMMETRIC)
@@ -123,8 +124,8 @@ def par_batch_crf(images, maps, num_workers=12):
 class CRFDataset(torch.utils.data.Dataset):
     def __init__(self, maps, images):
         assert images.dtype == np.uint8, images.dtype
+        assert maps.dtype == np.uint8, maps.dtype
         assert maps.shape[0] == images.shape[0]
-        assert maps.max() <= 1 and maps.min() >= 0
 
         self.maps = maps
         # [N C H W] -> [N H W C]
@@ -133,8 +134,10 @@ class CRFDataset(torch.utils.data.Dataset):
     def __getitem__(self, index):
         im = self.images[index]
         state = np.squeeze(self.maps[index])
+        state = state.astype(np.float32) / 255.0
         state = np.stack((1-state, state), axis=0)
         crf = crf_single_image(im, state)
+        crf = (crf * 255).astype(np.uint8)
 
         return crf, index
 
@@ -145,6 +148,7 @@ def par_batch_crf_dataloader(images, maps, num_workers=12):
     """
     Using pytorch's parallel dataloader for parallel crf
     """
+    assert maps.dtype == np.uint8
     crf_dataset = CRFDataset(maps, images=images)
     batch_sampler = BatchSampler(SequentialSampler(crf_dataset), batch_size=10, drop_last=False)
     crf_loader = torch.utils.data.DataLoader(
@@ -154,7 +158,7 @@ def par_batch_crf_dataloader(images, maps, num_workers=12):
          num_workers= min(images.shape[0], num_workers),
          pin_memory=True,
          drop_last=False)
-    
+
     crfed_maps = np.zeros_like(maps)
     for crf, indx in crf_loader:
         crfed_maps[indx, 0] = crf
@@ -163,7 +167,7 @@ def par_batch_crf_dataloader(images, maps, num_workers=12):
 
 if __name__ == "__main__":
     images = (np.random.rand(100, 3, 432, 432)*255).astype(np.uint8)
-    maps = np.random.rand(100, 1, 432, 432)
+    maps = (np.random.rand(100, 1, 432, 432) * 255).astype(np.uint8)
     start = time.time()
     par_batch_crf_dataloader(images, maps)
     print("par_batch_crf_dataloader: %f sec"%(time.time()-start))
