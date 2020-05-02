@@ -10,7 +10,7 @@ import os, sys, argparse, time, shutil
 from os.path import join, split, isdir, isfile, dirname, abspath
 from torch.utils.tensorboard import SummaryWriter
 from PIL import Image
-from vlkit.training import get_logger, run_path
+from vlkit.training import get_logger
 from vlkit import image as vlimage
 from vlkit.pytorch import save_checkpoint, AverageMeter, accuracy
 from vlkit.pytorch.datasets import ilsvrc2012
@@ -25,7 +25,9 @@ warnings.filterwarnings("ignore", "(Possibly )?corrupt EXIF data", UserWarning)
 from drn_seg import DRNSeg
 from dataset import SODDataset
 from utils import save_maps, get_full_image_names, load_batch_images
-from crf import batch_crf, par_batch_crf
+from crf import batch_crf, par_batch_crf, par_batch_crf_dataloader
+
+import gc
 
 
 parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
@@ -35,7 +37,7 @@ parser.add_argument('--print-freq', default=5, type=int,
                     metavar='N', help='print frequency (default: 10)')
 parser.add_argument('--arch', '--a', metavar='STR', default="drn_d_105", help='model')
 # data
-parser.add_argument('--data', metavar='DIR', default=None, help='path to dataset')
+parser.add_argument('--data', metavar='DIR', default="data", help='path to dataset')
 parser.add_argument('--use-rec', action='store_true', help='Use mxnet record.')
 parser.add_argument('--batch-size', default=20, type=int, metavar='N', help='mini-batch size')
 parser.add_argument('--imsize', default=432, type=int, metavar='N', help='im crop size')
@@ -56,7 +58,7 @@ parser.add_argument('--weight-decay', '--wd', default=1e-4, type=float,
                     metavar='W', help='weight decay')
 parser.add_argument('--resume', default="", type=str, metavar='PATH',
                     help='path to latest checkpoint')
-parser.add_argument('--tmp', help='tmp folder', default="tmp/pre-resnet50")
+parser.add_argument('--tmp', help='tmp folder', default="tmp")
 parser.add_argument('--pretrained', help='pretrained model', type=str, default="Pretrained_Models/drn_pretraining/drn-d-105_ms_cityscapes.pth")
 # Loss function
 parser.add_argument('--loss', help='loss function', type=str, default="ce")
@@ -75,7 +77,7 @@ parser.add_argument('--sync-bn', action='store_true',
                     help='Use sync BN.')
 args = parser.parse_args()
 
-args.tmp = run_path(args.tmp)
+
 if args.local_rank == 0:
     os.makedirs(args.tmp, exist_ok=True)
 
@@ -120,18 +122,18 @@ def main():
     image_transform = transforms.Compose([transforms.Resize([args.imsize]*2), transforms.ToTensor(), normalize])
     label_transform = transforms.Compose([transforms.Resize([args.imsize]*2, interpolation=Image.NEAREST), transforms.ToTensor()])
 
-    train_dataset = SODDataset(img_dir="/media/ssd0/deep-usps-data/01_img/",
-                        label_dirs=["/media/ssd0/deep-usps-data/02_gt/",
-                                    "/media/ssd0/deep-usps-data/03_mc/",
-                                    "/media/ssd0/deep-usps-data/04_hs/",
-                                    "/media/ssd0/deep-usps-data/05_dsr/",
-                                    "/media/ssd0/deep-usps-data/06_rbd/"],
-                        name_list="/home/kai/Code1/deep-usps/Parameters/train_names.txt",
+    train_dataset = SODDataset(img_dir=join(args.data, "01_img/"),
+                        label_dirs=[join(args.data, "02_gt/"),
+                                    join(args.data, "03_mc/"),
+                                    join(args.data, "04_hs/"),
+                                    join(args.data, "05_dsr/"),
+                                    join(args.data, "06_rbd/")],
+                        name_list=join(args.data, "train_names.txt"),
                         flip=False, image_transform=image_transform, label_transform=label_transform)
 
-    test_dataset = SODDataset(img_dir="/media/ssd0/deep-usps-data/01_img/",
-                    label_dirs=["/media/ssd0/deep-usps-data/02_gt/"],
-                    name_list="/home/kai/Code1/deep-usps/Parameters/test_names.txt",
+    test_dataset = SODDataset(img_dir=join(args.data, "01_img/"),
+                    label_dirs=[join(args.data, "02_gt/")],
+                    name_list=join(args.data, "test_names.txt"),
                     flip=False, image_transform=image_transform, label_transform=label_transform)
 
     if args.distributed:
@@ -145,17 +147,17 @@ def main():
 
     train_loader = torch.utils.data.DataLoader(
         train_dataset,
-        batch_size=args.batch_size, shuffle=(train_sampler is None), num_workers=4,
-        pin_memory=True, drop_last=True, sampler=train_sampler)
+        batch_size=args.batch_size, shuffle=(train_sampler is None), num_workers=args.workers,
+        pin_memory=True, sampler=train_sampler)
 
     val_loader = torch.utils.data.DataLoader(
         train_dataset,
-        batch_size=args.batch_size, shuffle=(train_sampler is None), num_workers=4,
-        pin_memory=True, drop_last=True, sampler=val_sampler)
+        batch_size=args.batch_size, shuffle=(train_sampler is None), num_workers=args.workers,
+        pin_memory=True, sampler=val_sampler)
 
     test_loader = torch.utils.data.DataLoader(
         test_dataset,
-        batch_size=100, shuffle=False, num_workers=4,
+        batch_size=100, shuffle=False, num_workers=args.workers,
         pin_memory=True, drop_last=False, sampler=test_sampler)
 
     train_loader_len = len(train_loader)
@@ -237,42 +239,73 @@ def main():
         loss, predictions, indice = train(train_loader, model, optimizer, scheduler, epoch)
         mae = test(test_loader, model, epoch)
 
-        assert predictions.min() >= 0 and predictions.max() <= 1
+        assert predictions.dtype == np.uint8
         assert predictions.shape[0] == indice.size, "predictions shape: {} v.s. indice size: {}".format(predictions.shape, indice.size)
 
-        if args.local_rank == 0:
-            logger.info("Loading images...")
         names = np.array(train_dataset.get_item_names())[indice].tolist()
-        full_image_names = get_full_image_names(train_dataset.img_dir, names=names, ext=".jpg", warn_exist=True)
-        images = load_batch_images(full_image_names, H=args.imsize, W=args.imsize)
-
         if args.local_rank == 0:
             logger.info("Saving predictions to %s" % join(args.tmp, "epoch-%d"%epoch, "predictions"))
-        save_maps(maps=(predictions*255).astype(np.uint8), names=names, dir=join(args.tmp, "epoch-%d"%epoch, "predictions"))
+
+        print("rank%d: saving predictions"%args.local_rank)
+        save_maps(maps=predictions, names=names, dir=join(args.tmp, "epoch-%d"%epoch, "predictions"))
+        print("rank%d: saving predictions done"%args.local_rank)
+
+
+        print("rank%d: reading images"%args.local_rank)
+        full_image_names = get_full_image_names(train_dataset.img_dir, names=names, ext=".jpg", warn_exist=True)
+        images = load_batch_images(full_image_names, H=args.imsize, W=args.imsize)
+        print("rank%d: reading images done"%args.local_rank)
 
         if args.local_rank == 0:
             start = time.time()
             logger.info("Applying crf to predictions (results saved to %s)" % join(args.tmp, "epoch-%d"%epoch, "crf"))
-        crf_results = par_batch_crf(images, predictions)
-        save_maps(maps=(crf_results*255).astype(np.uint8), names=names, dir=join(args.tmp, "epoch-%d"%epoch, "crf"), ext=".png")
+        print("rank%d: applying crf"%args.local_rank)
+        crf_results = par_batch_crf_dataloader(images, predictions)
+        print("rank%d: applying crf done, saving crf to %s"%(args.local_rank, join(args.tmp, "epoch-%d"%epoch, "crf")))
+        save_maps(maps=crf_results, names=names, dir=join(args.tmp, "epoch-%d"%epoch, "crf"), ext=".png")
+        print("rank%d: saving crf, done"%args.local_rank)
         if args.local_rank == 0:
             logger.info("Done! (%f sec elapsed.)" % (time.time()-start))
 
-        crf_results3 = (np.repeat(crf_results, axis=1, repeats=3)*255).astype(np.uint8)
-        predictions3 = (np.repeat(predictions, axis=1, repeats=3)*255).astype(np.uint8)
-        crf_results3 = np.concatenate((images, predictions3, crf_results3), axis=3)
-        save_maps(maps=crf_results3, names=names, dir=join(args.tmp, "epoch-%d"%epoch, "crf"), ext=".jpg")
+        # if args.local_rank == 0:
+        #     logger.info("Saving concatenated results to %s" % join(args.tmp, "epoch-%d"%epoch, "crf-debug"))
+        # crf_results3 = (np.repeat(crf_results, axis=1, repeats=3)*255).astype(np.uint8)
+        # predictions3 = (np.repeat(predictions, axis=1, repeats=3)*255).astype(np.uint8)
+        # crf_results3 = np.concatenate((images, predictions3, crf_results3), axis=3)
+        # save_maps(maps=crf_results3, names=names, dir=join(args.tmp, "epoch-%d"%epoch, "crf-debug"), ext=".jpg")
 
-        mva_dir = join(args.tmp, "epoch-%d"%epoch, "mva-crf")
-        full_mva_names = get_full_image_names(mva_dir, names=names, ext=".png", warn_exist=False)
+        # release memory
+        del images, predictions
+        gc.collect()
+
+        if args.local_rank == 0:
+            logger.info("Calculating moving-average...")
         alpha = 0.7
         if epoch == 0:
-            mva_crf = crf_results.copy()
+            mva_crf = crf_results
         else:
-            mva_crf = load_batch_images(full_mva_names, H=args.imsize, W=args.imsize)
-            mva_crf = alpha * mva_crf + (1 - alpha) *  crf_results
-        save_maps(maps=(mva_crf*255).astype(np.uint8), names=names, dir=mva_dir, ext=".png")
+            print("rank%d: loading previous crf maps "%args.local_rank)
+            last_mva_full_names = get_full_image_names(dir=join(args.tmp, "epoch-%d"%(epoch-1), "mva-crf"), names=names, ext=".png", warn_exist=True)
+            print("rank%d: loading previous crf maps "%args.local_rank)
+            mva_crf = load_batch_images(last_mva_full_names, H=args.imsize, W=args.imsize)
 
+            print("rank%d: calculating moving average"%args.local_rank)
+            for i in range(mva_crf.shape[0]):
+                mva_crf_i = mva_crf[i].astype(np.float32)/255.0 * alpha + crf_results[i].astype(np.float32)/255.0 * (1 - alpha)
+                mva_crf_i *= 255
+                mva_crf_i = mva_crf_i.astype(np.uint8)
+                mva_crf[i] = mva_crf_i
+            print("rank%d: calculating moving average, done!"%args.local_rank)
+
+        # Synchronizes all processes
+        dist.barrier()
+
+        print("rank%d: saving mva maps"%args.local_rank)
+        save_maps(maps=mva_crf, names=names, dir=join(args.tmp, "epoch-%d"%epoch, "mva-crf"), ext=".png")
+        print("rank%d: saving mva maps done."%args.local_rank)
+
+        # Synchronizes all processes
+        dist.barrier()
 
         is_best = mae < best_mae
         if is_best:
@@ -324,7 +357,7 @@ def train(train_loader, model, optimizer, lrscheduler, epoch):
     # switch to train mode
     model.train()
 
-    predictions = torch.empty(0, 1, args.imsize, args.imsize, dtype=DTYPE).cuda()
+    predictions = torch.empty(0, 1, args.imsize, args.imsize, dtype=torch.uint8).cuda()
     indice = torch.empty(0, dtype=torch.long).cuda()
 
     end = time.time()
@@ -341,7 +374,7 @@ def train(train_loader, model, optimizer, lrscheduler, epoch):
         data_time.update(time.time() - end)
         output = model(data)
 
-        predictions = torch.cat((predictions, torch.sigmoid(output.detach()).to(dtype=DTYPE)), dim=0)
+        predictions = torch.cat((predictions, (torch.sigmoid(output.detach())*255).to(dtype=torch.uint8)), dim=0)
         indice = torch.cat((indice, idx), dim=0)
 
         target = target.to(dtype=output.dtype)
@@ -439,7 +472,6 @@ def test(test_loader, model, epoch):
                       'Test Loss {loss.val:.3f} (avg={loss.avg:.3f})\t'
                       'MAE {mae.val:.3f} (avg={mae.avg:.3f})'.format(
                        i, test_loader_len, loss=losses, mae=mae))
-
 
     if args.local_rank == 0:
         logger.info(' * MAE {mae.avg:.5f}'.format(mae=mae))
