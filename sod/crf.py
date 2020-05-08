@@ -1,10 +1,14 @@
 import torch
 import numpy as np
+from PIL import Image
 import pydensecrf.densecrf as dcrf
 from torch.utils.data.sampler import BatchSampler, SequentialSampler
 import time, sys
+from os.path import isfile
 from concurrent.futures import ThreadPoolExecutor, wait, ALL_COMPLETED
 import multiprocessing
+from skimage.io import imsave
+import os, sys
 
 def crf_single_image(image, state):
     """
@@ -12,7 +16,7 @@ def crf_single_image(image, state):
     image: a [H, W, C] image
     """
     assert isinstance(state, np.ndarray)
-    assert isinstance(image, np.ndarray)
+    assert isinstance(image, np.ndarray), type(image)
     assert state.dtype == np.float32
     assert state.ndim == 3, "state shape {}".format(state.shape)
     assert state.max() <= 1 and state.min() >= 0, "state.min()=%f, state.max()=%f"%(state.min(), state.max())
@@ -38,132 +42,65 @@ def crf_single_image(image, state):
 
     return np.squeeze(new_state[1, :, :])
 
-def batch_crf(images, maps):
-    """
-    apply densecrf to a batch of maps
-    images, maps: N, C, H, W format tensors
-    """
-    assert isinstance(images, np.ndarray) and isinstance(maps, np.ndarray)
-    assert maps.min() <= 1 and maps.max() >= 0, "maps.min() %f v.s. maps.max() %f" % (maps.min(), maps.max())
-    assert images.ndim == 4 and maps.ndim == 4
-    N, _, H, W = images.shape
-    assert maps.shape == (N, 1, H, W)
-
-    assert maps.ndim == 4
-    state = np.concatenate((1-maps, maps), axis=1)
-    assert state.ndim == 4 and state.shape[1] == 2
-    state = np.ascontiguousarray(state)
-
-    images = images.transpose((0, 2, 3, 1))
-    images = np.ascontiguousarray(images)
-
-    crfed_maps = np.zeros_like(maps)
-    for i in range(N):
-        S = np.squeeze(state[i])
-        I = np.squeeze(images[i])
-
-        crfed = crf_single_image(I, S)
-        crfed_maps[i, ] = crfed
-
-    return crfed_maps
-
-def crf_thread(images, states, work_length, start_pos, crf_prediction):
-    for i in range(work_length):
-        S = np.squeeze(states[i])
-        I = np.squeeze(images[i])
-        t = time.time()
-        crfed = crf_single_image(I, S)
-        crf_prediction[i + start_pos, ] = crfed
-    return crf_prediction, start_pos, work_length
-
-
-def par_batch_crf(images, maps, num_workers=12):
-    """
-    multiprocessing parallel batch crf
-    """
-    assert isinstance(images, np.ndarray) and isinstance(maps, np.ndarray)
-    assert maps.min() <= 1 and maps.max() >= 0, "maps.min() %f v.s. maps.max() %f" % (maps.min(), maps.max())
-    assert images.ndim == 4 and maps.ndim == 4
-    N, _, H, W = images.shape
-    assert maps.shape == (N, 1, H, W)
-
-    assert maps.ndim == 4
-    state = np.concatenate((1-maps, maps), axis=1)
-    assert state.ndim == 4 and state.shape[1] == 2
-    state = np.ascontiguousarray(state)
-
-    num_workers = min(images.shape[0], num_workers)
-    images = images.transpose((0, 2, 3, 1))
-    images = np.ascontiguousarray(images)
-
-    crf_prediction = np.zeros_like(maps)
-    pool = multiprocessing.Pool(processes=num_workers)
-
-    offset = N // num_workers
-    remain = N % num_workers
-    #executor = ThreadPoolExecutor(max_num_workers=num_workers)
-    threads = []
-    result = []
-    for i in range(num_workers):
-        if i == num_workers-1:
-            length = offset + remain
-        else:
-            length = offset
-        result.append(pool.apply_async(crf_thread, args=(images, state, length, i*offset, crf_prediction)))
-
-    pool.close()
-    pool.join()
-
-    for res in result:
-        pred, start, length = res.get()
-        crf_prediction[start:start+length, ] = pred[start:start+length, ]
-
-    return crf_prediction
-
-
 class CRFDataset(torch.utils.data.Dataset):
-    def __init__(self, maps, images):
-        assert images.dtype == np.uint8, images.dtype
-        assert maps.dtype == np.uint8, maps.dtype
-        assert maps.shape[0] == images.shape[0]
-
+    def __init__(self, images, maps, save_dir, H=432, W=432):
         self.maps = maps
-        # [N C H W] -> [N H W C]
-        self.images = np.ascontiguousarray(images.transpose((0, 2, 3, 1)))
+        self.images = images
+        self.save_dir = save_dir
+        self.H, self.W = H, W
 
     def __getitem__(self, index):
-        im = self.images[index]
-        state = np.squeeze(self.maps[index])
-        state = state.astype(np.float32) / 255.0
+        im = np.array(Image.open(self.images[index]).resize((self.W, self.H)))
+        m = np.array(Image.open(self.maps[index]).resize((self.W, self.H)))
+        assert m.ndim == 2
+        state = m.astype(np.float32) / 255.0
         state = np.stack((1-state, state), axis=0)
         crf = crf_single_image(im, state)
         crf = (crf * 255).astype(np.uint8)
 
-        return crf, index
+        fn = os.path.splitext(os.path.split(self.images[index])[-1])[0]
+        fp = os.path.join(self.save_dir, fn+".png")
+        Image.fromarray(crf).save(fp)
+
+        # for visualization
+        m = np.stack((m,m,m), axis=2)
+        crf = np.stack((crf,crf,crf), axis=2)
+        vis = np.concatenate((im, m, crf), axis=1)
+        Image.fromarray(vis).save(os.path.join(self.save_dir, fn+"-im-prediction-crf.jpg"))
+
+        return fp, index
 
     def __len__(self):
-        return self.images.shape[0]
+        return len(self.images)
 
-def par_batch_crf_dataloader(images, maps, num_workers=12):
+def par_batch_crf_dataloader(images, maps, save_dir, num_workers=12):
     """
     Using pytorch's parallel dataloader for parallel crf
     """
-    assert maps.dtype == np.uint8
-    crf_dataset = CRFDataset(maps, images=images)
+    assert type(images) == list
+    assert type(maps) == list
+    for i in images:
+        assert isfile(i)
+    for i in maps:
+        assert isfile(i)
+    os.makedirs(save_dir, exist_ok=True)
+    crf_dataset = CRFDataset(images, maps, save_dir)
     batch_sampler = BatchSampler(SequentialSampler(crf_dataset), batch_size=10, drop_last=False)
     crf_loader = torch.utils.data.DataLoader(
          crf_dataset,
          batch_sampler=batch_sampler,
          shuffle=False,
-         num_workers= min(images.shape[0], num_workers),
+         num_workers= min(len(images), num_workers),
          pin_memory=True,
          drop_last=False)
 
-    crfed_maps = np.zeros_like(maps)
-    for crf, indx in crf_loader:
-        crfed_maps[indx, 0] = crf
+    crf_names = []
+    for fp, idx in crf_loader:
+        crf_names += fp
 
-    return crfed_maps
+    return crf_names
+
+
 
 if __name__ == "__main__":
     images = (np.random.rand(100, 3, 432, 432)*255).astype(np.uint8)
