@@ -75,8 +75,8 @@ def mva_single_image(old, new, alpha=0.7):
     assert old.dtype == np.uint8
     assert new.dtype == np.uint8
 
-    old = old.astype(np.float32)
-    new = new.astype(np.float32)
+    old = old.astype(np.float32) / 255
+    new = new.astype(np.float32) / 255
 
     mva = old*alpha + new*(1-alpha)
     mva = (mva*255).astype(np.uint8)

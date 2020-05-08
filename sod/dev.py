@@ -273,7 +273,8 @@ def main():
 
         mae_plain, f_plain = evaluate_maps(join(args.tmp, "epoch-%d"%epoch, "plain"), join(args.data, "02_gt/"), names=names)
         mae_crf, f_crf = evaluate_maps(join(args.tmp, "epoch-%d"%epoch, "crf"), join(args.data, "02_gt/"), names=names)
-        print("rank-%d: mae_plain=%.4f F_plain=%.4f | mae_crf=%.4f F_crf=%.4f"%(args.local_rank, mae_plain, f_plain, mae_crf, f_crf))
+        print("rank-%d: MAE-plain=%.4f F-plain=%.4f | MAE-crf=%.4f F-crf=%.4f | MAE-mva=%f F-mva=%f" % \
+             (args.local_rank, mae_plain, f_plain, mae_crf, f_crf, mae_mva, f_mva))
 
         metrics = torch.tensor([mae_plain, f_plain, mae_crf, f_crf, mae_mva, f_mva]).cuda()
         metrics = reduce_tensor(metrics).tolist()
