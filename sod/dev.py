@@ -24,7 +24,7 @@ import warnings
 warnings.filterwarnings("ignore", "(Possibly )?corrupt EXIF data", UserWarning)
 from drn_seg import DRNSeg
 from dataset import SODDataset
-from utils import save_maps, get_full_image_names, load_batch_images, batch_mva, evaluate_maps
+from utils import save_maps, get_full_image_names, load_batch_images, batch_mva, evaluate_maps, init_from_pretrained
 from crf import par_batch_crf_dataloader
 from floss import FLoss, F_cont, simple_fmeasure
 
@@ -92,6 +92,13 @@ args.distributed = False
 if 'WORLD_SIZE' in os.environ:
     args.distributed = int(os.environ['WORLD_SIZE']) > 1
 
+if args.distributed:
+    args.gpu = args.local_rank % torch.cuda.device_count()
+    torch.cuda.set_device(args.gpu)
+    torch.distributed.init_process_group(backend='nccl',
+                                            init_method='env://')
+    args.world_size = torch.distributed.get_world_size()
+
 DTYPE = torch.float
 if args.fp16:
     from apex import amp
@@ -99,90 +106,60 @@ if args.fp16:
     assert args.distributed, "FP16 can be only used in Distributed mode"
     assert torch.backends.cudnn.enabled, "fp16 mode requires cudnn backend to be enabled."
 
-# if args.loss == "ce":
-#     criterion = torch.nn.BCEWithLogitsLoss(reduction="none")
-# elif args.loss == "floss":
-#     criterion = FLoss(beta=args.floss_beta)
+
 
 criterion = FLoss(beta=args.floss_beta)
+normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                        std=[0.229, 0.224, 0.225])
+image_transform = transforms.Compose([transforms.Resize([args.imsize]*2), transforms.ToTensor(), normalize])
+label_transform = transforms.Compose([transforms.Resize([args.imsize]*2, interpolation=Image.NEAREST), transforms.ToTensor()])
+train_dataset = SODDataset(img_dir=join(args.data, "01_img/"),
+                label_dirs=[join(args.data, "02_gt/")],
+                name_list=join(args.data, "train_names.txt"),
+                flip=False, image_transform=image_transform, label_transform=label_transform)
+test_dataset = SODDataset(img_dir=join(args.data, "01_img/"),
+                label_dirs=[join(args.data, "02_gt/")],
+                name_list=join(args.data, "test_names.txt"),
+                flip=False, image_transform=image_transform, label_transform=label_transform)
+
+if args.distributed:
+        train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
+        val_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset, shuffle=False)
+        test_sampler = torch.utils.data.distributed.DistributedSampler(test_dataset, shuffle=False)
+else:
+    train_sampler = None
+    val_sampler = None
+    test_sampler = None
+
+train_loader = torch.utils.data.DataLoader(
+    train_dataset,
+    batch_size=args.batch_size, shuffle=(train_sampler is None), num_workers=args.workers,
+    pin_memory=True, sampler=train_sampler)
+
+val_loader = torch.utils.data.DataLoader(
+    train_dataset,
+    batch_size=args.batch_size, shuffle=(train_sampler is None), num_workers=args.workers,
+    pin_memory=True, sampler=val_sampler)
+
+test_loader = torch.utils.data.DataLoader(
+    test_dataset,
+    batch_size=100, shuffle=False, num_workers=args.workers,
+    pin_memory=True, drop_last=False, sampler=test_sampler)
+
+train_loader_len = len(train_loader)
 
 def main():
     if args.local_rank == 0:
         logger.info(args)
-
-    if args.distributed:
-        args.gpu = args.local_rank % torch.cuda.device_count()
-        torch.cuda.set_device(args.gpu)
-        torch.distributed.init_process_group(backend='nccl',
-                                             init_method='env://')
-        args.world_size = torch.distributed.get_world_size()
-
-    normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                     std=[0.229, 0.224, 0.225])
-    image_transform = transforms.Compose([transforms.Resize([args.imsize]*2), transforms.ToTensor(), normalize])
-    label_transform = transforms.Compose([transforms.Resize([args.imsize]*2, interpolation=Image.NEAREST), transforms.ToTensor()])
-
-    train_dataset = SODDataset(img_dir=join(args.data, "01_img/"),
-                        label_dirs=[join(args.data, "02_gt/"),
-                                    "tmp/2gpus-bs10-drn22-floss-lr1e-2/mva",
-                                    join(args.data, "04_hs/"),
-                                    join(args.data, "05_dsr/"),
-                                    join(args.data, "06_rbd/")],
-                        name_list=join(args.data, "train_names.txt"),
-                        flip=False, image_transform=image_transform, label_transform=label_transform)
-
-    test_dataset = SODDataset(img_dir=join(args.data, "01_img/"),
-                    label_dirs=[join(args.data, "02_gt/")],
-                    name_list=join(args.data, "test_names.txt"),
-                    flip=False, image_transform=image_transform, label_transform=label_transform)
-
-    if args.distributed:
-        train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
-        val_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset, shuffle=False)
-        test_sampler = torch.utils.data.distributed.DistributedSampler(test_dataset, shuffle=False)
-    else:
-        train_sampler = None
-        val_sampler = None
-        test_sampler = None
-
-    train_loader = torch.utils.data.DataLoader(
-        train_dataset,
-        batch_size=args.batch_size, shuffle=(train_sampler is None), num_workers=args.workers,
-        pin_memory=True, sampler=train_sampler)
-
-    val_loader = torch.utils.data.DataLoader(
-        train_dataset,
-        batch_size=args.batch_size, shuffle=(train_sampler is None), num_workers=args.workers,
-        pin_memory=True, sampler=val_sampler)
-
-    test_loader = torch.utils.data.DataLoader(
-        test_dataset,
-        batch_size=100, shuffle=False, num_workers=args.workers,
-        pin_memory=True, drop_last=False, sampler=test_sampler)
-
-    train_loader_len = len(train_loader)
-
     # model and optimizer
     model = DRNSeg(args.arch, classes=1)
-
-    # add model graph
-    if args.local_rank == 0:
-        tfboard_writer.add_graph(model, torch.zeros(1, 3, args.imsize, args.imsize))
-
+    
     if args.pretrained is not None:
-        assert isfile(args.pretrained)
-        load_dict = torch.load(args.pretrained)
-        own_dict=model.state_dict()
-        for name, param in load_dict.items():
-            if name not in own_dict:
-                if args.local_rank == 0:
-                    logger.info('Parameter %s not found in own model.'%name)
-                continue
-            if own_dict[name].size() != load_dict[name].size():
-                if args.local_rank == 0:
-                    logger.info('Parameter shape does not match: {} ({} vs. {}).'.format(name, own_dict[name].size(), load_dict[name].size()))
-            else:
-                own_dict[name].copy_(param)
+        if args.local_rank == 0:
+            model = init_from_pretrained(model, args.pretrained, verbose=True)
+        else:
+            model = init_from_pretrained(model, args.pretrained, verbose=False)
+
     if args.sync_bn:
         if args.local_rank == 0:
             logger.info("using apex synced BN")
@@ -228,11 +205,37 @@ def main():
             if args.local_rank == 0:
                 logger.info("=> no checkpoint found at '{}'".format(args.resume))
 
-    scheduler = CosAnnealingLR(loader_len=train_loader_len, epochs=args.epochs, max_lr=args.lr, min_lr=1e-5, warmup_epochs=args.warmup_epochs)
+    train_loader.dataset.label_dirs=[join(args.data, "03_mc")]
+    train_round(model, optimizer, train_loader, round=0)
 
-    for epoch in range(args.start_epoch, args.epochs):
+    init_from_pretrained(model.module, args.pretrained)
+    train_loader.dataset.label_dirs=[join(args.tmp, "round-0/epoch-%d"%(args.epochs-1), "mva")]
+    train_round(model, optimizer, train_loader, round=1)
+
+    init_from_pretrained(model.module, args.pretrained)
+    train_loader.dataset.label_dirs=[join(args.tmp, "round-1/epoch-%d"%(args.epochs-1), "mva")]
+    train_round(model, optimizer, train_loader, round=2)
+
+    if args.local_rank == 0:
+        logger.info("Optimization done, ALL results saved to %s." % args.tmp)
+        tfboard_writer.close()
+        for h in logger.handlers:
+            h.close()
+
+threshold = {
+    "mc": 0.31,
+    "hs": 0.36
+}
+
+def train_round(model, optimizer, loader, round=0):
+    train_loader_len = len(train_loader)
+    scheduler = CosAnnealingLR(loader_len=train_loader_len, epochs=args.epochs, max_lr=args.lr, min_lr=1e-5, warmup_epochs=args.warmup_epochs)
+    best_mae = 1000
+    for epoch in range(args.epochs):
         if args.distributed:
             train_sampler.set_epoch(epoch)
+
+        tmp_dir = join(args.tmp, "round-%d"%round, "epoch-%d"%epoch)
 
         # train and evaluate
         loss, predictions, indice = train_epoch(train_loader, model, optimizer, scheduler, epoch)
@@ -241,38 +244,36 @@ def main():
         assert predictions.dtype == np.uint8
         assert predictions.shape[0] == indice.size, "predictions shape: {} v.s. indice size: {}".format(predictions.shape, indice.size)
 
-        # this part is memory-comsuming because there are several big tensors involved:
-        # predictions, crf_results, mva, ground_truths
         names = np.array(train_dataset.get_item_names())[indice].tolist()
         if args.local_rank == 0:
-            logger.info("Saving predictions to %s" % join(args.tmp, "epoch-%d"%epoch, "plain"))
-
-        print("rank%d: saving predictions"%args.local_rank)
-        predictions_names = save_maps(maps=predictions, names=names, dir=join(args.tmp, "epoch-%d"%epoch, "plain"))
-        print("rank%d: saving predictions done"%args.local_rank)
+            logger.info("Round-%d: saving predictions to %s" % (round, join(tmp_dir, "plain")))
+        predictions_names = save_maps(maps=predictions, names=names, dir=join(tmp_dir, "plain"))
 
         if args.local_rank == 0:
             start = time.time()
-            logger.info("Applying crf to predictions (results saved to %s)" % join(args.tmp, "epoch-%d"%epoch, "crf"))
-        print("rank%d: applying crf"%args.local_rank)
+            logger.info("Round-%d: applying crf to predictions (results saved to %s)" % (round, join(tmp_dir, "crf")))
         full_image_names = get_full_image_names(train_dataset.img_dir, names=names, ext=".jpg", warn_exist=True)
-        crf_names = par_batch_crf_dataloader(full_image_names, predictions_names, save_dir=join(args.tmp, "epoch-%d"%epoch, "crf"))
-        print("rank%d: applying crf, done!"%args.local_rank)
+        crf_names = par_batch_crf_dataloader(full_image_names, predictions_names, save_dir=join(tmp_dir, "crf"))
+
         if args.local_rank == 0:
             logger.info("Done! (%f sec elapsed.)" % (time.time()-start))
 
+        if args.local_rank == 0:
+            start = time.time()
+            logger.info("Round-%d: calculating moving average" % round)
         alpha = 0.7
-        if epoch >= 1:
-            print("rank%d: calculating moving average..."%args.local_rank)
-            last_crf = get_full_image_names(join(args.tmp, "epoch-%d" % (epoch-1), "crf"), names=names, ext=".png", warn_exist=True)
-            batch_mva(last_crf, crf_names, join(args.tmp, "epoch-%d" % epoch, "mva"), alpha=alpha)
-            print("rank%d: calculating moving average, done!"%args.local_rank)
-            mae_mva, f_mva = evaluate_maps(join(args.tmp, "epoch-%d"%epoch, "mva"), join(args.data, "02_gt/"), names=names)
-        else:
-            mae_mva, f_mva = 0, 0
+        if epoch == 0:
+            mva_dir = join(tmp_dir, "crf")
+        elif epoch >= 1:
+            mva_names = get_full_image_names(mva_dir, names=names, ext=".png", warn_exist=True)
+            mva_dir = join(tmp_dir, "mva")
+            batch_mva(mva_names, crf_names, mva_dir, alpha=alpha)
+        if args.local_rank == 0:
+            logger.info("Done! (%f sec elapsed.)" % (time.time()-start))
 
-        mae_plain, f_plain = evaluate_maps(join(args.tmp, "epoch-%d"%epoch, "plain"), join(args.data, "02_gt/"), names=names)
-        mae_crf, f_crf = evaluate_maps(join(args.tmp, "epoch-%d"%epoch, "crf"), join(args.data, "02_gt/"), names=names)
+        mae_plain, f_plain = evaluate_maps(join(tmp_dir, "plain"), join(args.data, "02_gt/"), names=names)
+        mae_crf, f_crf = evaluate_maps(join(tmp_dir, "crf"), join(args.data, "02_gt/"), names=names)
+        mae_mva, f_mva = evaluate_maps(mva_dir, join(args.data, "02_gt/"), names=names)
         print("rank-%d: MAE-plain=%.4f F-plain=%.4f | MAE-crf=%.4f F-crf=%.4f | MAE-mva=%f F-mva=%f" % \
              (args.local_rank, mae_plain, f_plain, mae_crf, f_crf, mae_mva, f_mva))
 
@@ -287,49 +288,21 @@ def main():
             best_mae = mae
 
         if args.local_rank == 0:
-            # save checkpoint
-            # save_checkpoint({
-            #     'epoch': epoch + 1,
-            #     'state_dict': model.state_dict(),
-            #     'best_mae': best_mae,
-            #     'optimizer' : optimizer.state_dict()},
-            #     is_best, path=args.tmp)
-
-            # if (epoch+1) in args.milestones:
-            #     save_checkpoint({
-            #         'epoch': epoch + 1,
-            #         'arch': args.arch,
-            #         'state_dict': model.state_dict(),
-            #         'best_mae': best_mae,
-            #         'optimizer': optimizer.state_dict(),
-            #     }, is_best=False, path=args.tmp, filename="checkpoint-epoch%d.pth"%epoch)
 
             logger.info("Best mae=%.5f" % best_mae)
-            tfboard_writer.add_scalar('train/loss', loss, epoch)
-            tfboard_writer.add_scalar('train/MAE-plain', metrics[0], epoch)
-            tfboard_writer.add_scalar('train/Fmeasure-plain', metrics[1], epoch)
-            tfboard_writer.add_scalar('train/MAE-crf', metrics[2], epoch)
-            tfboard_writer.add_scalar('train/Fmeasure-crf', metrics[3], epoch)
-            tfboard_writer.add_scalar('train/MAE-mva', metrics[4], epoch)
-            tfboard_writer.add_scalar('train/Fmeasure-mva', metrics[5], epoch)
+            tfboard_writer.add_scalar('train/round-%d/loss'%round, loss, epoch)
+            tfboard_writer.add_scalar('train/round-%d/MAE-plain'%round, metrics[0], epoch)
+            tfboard_writer.add_scalar('train/round-%d/Fmeasure-plain'%round, metrics[1], epoch)
+            tfboard_writer.add_scalar('train/round-%d/MAE-crf'%round, metrics[2], epoch)
+            tfboard_writer.add_scalar('train/round-%d/Fmeasure-crf'%round, metrics[3], epoch)
+            tfboard_writer.add_scalar('train/round-%d/MAE-mva'%round, metrics[4], epoch)
+            tfboard_writer.add_scalar('train/round-%d/Fmeasure-mva'%round, metrics[5], epoch)
 
-            tfboard_writer.add_scalar('train/loss', loss, epoch)
-            tfboard_writer.add_scalar('train/loss', loss, epoch)
-            tfboard_writer.add_scalar('train/lr', optimizer.param_groups[0]["lr"], epoch)
-            tfboard_writer.add_scalar('test/mae', mae, epoch)
-            tfboard_writer.add_scalar('test/simple-fmeasure', fmeasure, epoch)
-
-    if args.local_rank == 0:
-        logger.info("Optimization done, ALL results saved to %s." % args.tmp)
-        tfboard_writer.close()
-        for h in logger.handlers:
-            h.close()
-
-threshold = {
-    "mc": 0.31,
-    "hs": 0.36
-}
-
+            tfboard_writer.add_scalar('train/round-%d/loss'%round, loss, epoch)
+            tfboard_writer.add_scalar('train/round-%d/loss'%round, loss, epoch)
+            tfboard_writer.add_scalar('train/round-%d/lr'%round, optimizer.param_groups[0]["lr"], epoch)
+            tfboard_writer.add_scalar('test/round-%d/mae'%round, mae, epoch)
+            tfboard_writer.add_scalar('test/round-%d/simple-fmeasure'%round, fmeasure, epoch)
 
 def train_epoch(train_loader, model, optimizer, lrscheduler, epoch):
     batch_time = AverageMeter()
@@ -345,13 +318,13 @@ def train_epoch(train_loader, model, optimizer, lrscheduler, epoch):
 
     end = time.time()
     for i, data in enumerate(train_loader):
-        # data = [d.cuda() for d in data]
-        data, gt, mc, hs, drs, rbd, idx = data
+
+        data, target, idx = data
         if args.distributed:
             data = data.cuda(non_blocking=True).to(dtype=DTYPE)
         idx = idx.cuda().to(dtype=torch.long)
-        mc = mc.cuda(non_blocking=True)
-        target = mc>threshold["mc"]
+        target = target.cuda(non_blocking=True)
+        target = target>threshold["mc"]
 
         # measure data loading time
         data_time.update(time.time() - end)
@@ -397,9 +370,6 @@ def train_epoch(train_loader, model, optimizer, lrscheduler, epoch):
         lr = optimizer.param_groups[0]["lr"]
 
         if args.local_rank == 0 and i % args.print_freq == 0:
-            tfboard_writer.add_scalar("train/iter-lr", lr, epoch*train_loader_len+i)
-            tfboard_writer.add_scalar("train/iter-loss", losses.val, epoch*train_loader_len+i)
-
             logger.info('Epoch[{0}/{1}] It[{2}/{3}]\t'
                   'Batch Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
                   'Data Time {data_time.val:.3f} ({data_time.avg:.3f})\t'

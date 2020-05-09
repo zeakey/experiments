@@ -1,3 +1,4 @@
+import torch
 import numpy as np
 from PIL import Image
 from os.path import join, isfile
@@ -131,5 +132,18 @@ def evaluate_maps(prediction_dir, gt_dir, names, size=(432, 432), ext=".png"):
         fmeasure.update(f_zero_point_five(pred, gt))
     return mae.avg, fmeasure.avg
 
-
-
+def init_from_pretrained(model, pretrained, verbose=False):
+    assert isfile(pretrained)
+    load_dict = torch.load(pretrained)
+    own_dict = model.state_dict()
+    for name, param in load_dict.items():
+        if name not in own_dict:
+            if verbose:
+                print("Parameter %s not found in own model." % name)
+            continue
+        if own_dict[name].size() != load_dict[name].size():
+            if verbose:
+                print('Parameter shape does not match: {} (own {} vs. pretrained {}).'.format(name, own_dict[name].size(), load_dict[name].size()))
+        else:
+            own_dict[name].copy_(param)
+    return model
