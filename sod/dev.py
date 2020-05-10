@@ -290,19 +290,19 @@ def train_round(model, optimizer, loader, round=0):
         if args.local_rank == 0:
 
             logger.info("Best mae=%.5f" % best_mae)
-            tfboard_writer.add_scalar('train/round-%d/loss'%round, loss, epoch)
-            tfboard_writer.add_scalar('train/round-%d/MAE-plain'%round, metrics[0], epoch)
-            tfboard_writer.add_scalar('train/round-%d/Fmeasure-plain'%round, metrics[1], epoch)
-            tfboard_writer.add_scalar('train/round-%d/MAE-crf'%round, metrics[2], epoch)
-            tfboard_writer.add_scalar('train/round-%d/Fmeasure-crf'%round, metrics[3], epoch)
-            tfboard_writer.add_scalar('train/round-%d/MAE-mva'%round, metrics[4], epoch)
-            tfboard_writer.add_scalar('train/round-%d/Fmeasure-mva'%round, metrics[5], epoch)
+            tfboard_writer.add_scalar('train/loss', loss, epoch+round*args.epochs)
+            tfboard_writer.add_scalar('train/MAE-plain', metrics[0], epoch+round*args.epochs)
+            tfboard_writer.add_scalar('train/Fmeasure-plain', metrics[1], epoch+round*args.epochs)
+            tfboard_writer.add_scalar('train/MAE-crf', metrics[2], epoch+round*args.epochs)
+            tfboard_writer.add_scalar('train/Fmeasure-crf', metrics[3], epoch+round*args.epochs)
+            tfboard_writer.add_scalar('train/MAE-mva', metrics[4], epoch+round*args.epochs)
+            tfboard_writer.add_scalar('train/Fmeasure-mva', metrics[5], epoch+round*args.epochs)
 
-            tfboard_writer.add_scalar('train/round-%d/loss'%round, loss, epoch)
-            tfboard_writer.add_scalar('train/round-%d/loss'%round, loss, epoch)
-            tfboard_writer.add_scalar('train/round-%d/lr'%round, optimizer.param_groups[0]["lr"], epoch)
-            tfboard_writer.add_scalar('test/round-%d/mae'%round, mae, epoch)
-            tfboard_writer.add_scalar('test/round-%d/simple-fmeasure'%round, fmeasure, epoch)
+            tfboard_writer.add_scalar('train/loss', loss, epoch+round*args.epochs)
+            tfboard_writer.add_scalar('train/loss', loss, epoch+round*args.epochs)
+            tfboard_writer.add_scalar('train/lr', optimizer.param_groups[0]["lr"], epoch+round*args.epochs)
+            tfboard_writer.add_scalar('test/mae', mae, epoch+round*args.epochs)
+            tfboard_writer.add_scalar('test/simple-fmeasure', fmeasure, epoch+round*args.epochs)
 
 def train_epoch(train_loader, model, optimizer, lrscheduler, epoch):
     batch_time = AverageMeter()
