@@ -7,11 +7,11 @@ import numpy as np
 import math
 import os, sys, argparse, time, shutil
 from os.path import join, split, isdir, isfile, dirname, abspath
-from vltools import Logger, run_path
-from vltools.pytorch import save_checkpoint, AverageMeter, accuracy
-import vltools.pytorch as vlpytorch
-from vltools.tcm.lr import CosAnnealingLR, MultiStepLR
-from vltools import image as vlimage
+from vlkit import get_logger, run_path
+from vlkit.pytorch import save_checkpoint, AverageMeter, accuracy
+import vlkit.pytorch as vlpytorch
+from vlkit.lr import CosAnnealingLR, MultiStepLR
+from vlkit import image as vlimage
 
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
@@ -35,7 +35,7 @@ import matplotlib.pyplot as plt
 from PIL import Image, ImageFont, ImageDraw
 
 from models import preact_resnet, modules, sphere_face, sphereface
-import verification, face_verification
+import face_verification
 
 import warnings
 warnings.filterwarnings("ignore", "(Possibly )?corrupt EXIF data", UserWarning)
@@ -48,8 +48,8 @@ parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
 parser.add_argument('--print-freq', default=100, type=int,
                     metavar='N', help='print frequency (default: 10)')
 # model
-parser.add_argument('--model', default="sphere_face.Sphere20", help='backbone model')
-parser.add_argument('--linear', default="sphere_face.AngleLinear", help='linear layer')
+parser.add_argument('--model', default="preact_resnet.resnet34", help='backbone model')
+parser.add_argument('--linear', default="modules.NormLinear", help='linear layer')
 # data
 parser.add_argument('--use-rec', action="store_true")
 parser.add_argument('--dali-cpu', action='store_true',
@@ -57,8 +57,8 @@ parser.add_argument('--dali-cpu', action='store_true',
 parser.add_argument('--data', metavar='DIR', default=None, help='path to dataset')
 parser.add_argument('--lfwdir', metavar='DIR', default="", help='path to LFW dataset')
 parser.add_argument('-j', '--workers', default=4, type=int, help='number of data loading workers')
-parser.add_argument('--num-classes', default=1000, type=int, metavar='N', help='Number of classes (10572|85742)')
-parser.add_argument('--batch-size', default=256, type=int,
+parser.add_argument('--num-classes', default=10572, type=int, metavar='N', help='Number of classes (10572|85742)')
+parser.add_argument('--batch-size', default=128, type=int,
                     metavar='N', help='mini-batch size')
 # optimizer
 parser.add_argument('--epochs', default=20, type=int, metavar='N',
@@ -74,7 +74,7 @@ parser.add_argument('--weight-decay', '--wd', default=1e-4, type=float,
                     metavar='W', help='weight decay')
 parser.add_argument('--resume', default="", type=str, metavar='PATH',
                     help='path to latest checkpoint')
-parser.add_argument('--tmp', help='tmp folder', default="tmp/face")
+parser.add_argument('--tmp', help='tmp folder', default="tmp/resnet34-linear")
 parser.add_argument('--label-smoothing', type=float, default=0.0, help="label-smoothing temperature")
 # FP16
 parser.add_argument('--fp16', action='store_true',
@@ -100,7 +100,6 @@ parser.add_argument("--seed", default=7, type=int)
 args = parser.parse_args()
 
 args.milestones = [int(i) for i in args.milestones.split(',')]
-args.tmp = run_path(args.tmp)
 
 # https://pytorch.org/docs/stable/notes/randomness.html
 np.random.seed(args.seed)
@@ -150,7 +149,7 @@ else:
 
 if args.local_rank == 0:
     tfboard_writer = writer = SummaryWriter(log_dir=args.tmp)
-    logger = Logger(join(args.tmp, "log.txt"))
+    logger = get_logger(join(args.tmp, "log.txt"))
 
 args.distributed = False
 if 'WORLD_SIZE' in os.environ:
@@ -186,7 +185,8 @@ def main():
     # model and optimizer
     # model = preact_resnet.resnet34()
     model = args.model+"().cuda()"
-    linear = args.linear+"(in_features=512, out_features=%d, m=%f).cuda()" % (args.num_classes, args.m2)
+    # linear = args.linear+"(in_features=512, out_features=%d).cuda()" % (args.num_classes)
+    linear = "nn.Linear(512, args.num_classes).cuda()"
     model = eval(model)
     linear = eval(linear)
 
@@ -259,11 +259,10 @@ def main():
             tfboard_writer.add_scalar('test/lfw-thres', lfwthres, epoch)
 
         if args.local_rank == 0:
-
             # save checkpoint
             save_checkpoint({
                 'epoch': epoch + 1,
-                'state_dict': model.state_dict(),
+                'state_dict': {**model.state_dict(), **linear.state_dict()},
                 'best_lfw': best_lfw,
                 'optimizer' : optimizer.state_dict()},
                 True, path=args.tmp)
@@ -279,6 +278,9 @@ def main():
 
     if args.local_rank == 0:
         logger.info("Optimization done (best lfw-acc=%.4f), ALL results saved to %s." % (best_lfw, args.tmp))
+        tfboard_writer.close()
+        for h in logger.handlers:
+            h.close()
 
 def train(train_loader, model, optimizer, lrscheduler, epoch):
     batch_time = AverageMeter()
@@ -334,7 +336,7 @@ def train(train_loader, model, optimizer, lrscheduler, epoch):
                     lam = (1 - math.cos(lam_effective_iter * math.pi / args.max_lam_iter)) / 2 * args.max_lam
 
         feature = model(data)
-        output = linear(feature, target)
+        output = linear(feature)#, target)
         if args.label_smoothing == 0:
             loss = criterion(output, target)
         else:
