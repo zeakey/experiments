@@ -16,10 +16,9 @@ class NormLinear(nn.Module):
         nn.init.normal_(self.weight.data, 0, 0.01)
 
     def forward(self, input):
-
-        output = F.linear(input, self.weight)
-        output = F.normalize(output) * self.s
-
+        input = F.normalize(input, dim=1, p=2)
+        weight = F.normalize(self.weight, dim=1, p=2)
+        output = F.linear(input, weight)
         return output
 
 class MarginLinear(nn.Module):
