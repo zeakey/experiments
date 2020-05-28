@@ -186,7 +186,8 @@ def main():
     # model = preact_resnet.resnet34()
     model = args.model+"().cuda()"
     # linear = args.linear+"(in_features=512, out_features=%d).cuda()" % (args.num_classes)
-    linear = "nn.Linear(512, args.num_classes).cuda()"
+    # linear = "nn.Linear(512, args.num_classes).cuda()"
+    linear = "modules.NormLinear(512, args.num_classes, s=args.s).cuda()"
     model = eval(model)
     linear = eval(linear)
 
@@ -302,21 +303,11 @@ def train(train_loader, model, optimizer, lrscheduler, epoch):
         data = data[0]["data"]
         data = data - 127.5
         data = data * 0.0078125
+        bs = data.shape[0]
         assert target.max() < args.num_classes, "%d vs %d" % (target.max(), args.num_classes)
 
         if args.fp16:
             data = data.half()
-
-        # hole aug
-        if args.hole:
-            N = data.shape[0]
-            xs = np.concatenate((np.arange(0,50), np.arange(62,112)), axis=0)
-            xs = np.random.choice(xs, N).tolist()
-            ys = np.random.choice(data.shape[2], N).tolist()
-            for n in range(N):
-                x1 = xs[n]
-                y1 = ys[n]
-                data[n, :, y1-5:y1+5, x1-5:x1+5] = 0
 
         # measure data loading time
         data_time.update(time.time() - end)
@@ -395,12 +386,31 @@ def train(train_loader, model, optimizer, lrscheduler, epoch):
             else:
                 wnorm = torch.norm(linear.weight.data.float(), p=2, dim=1).detach().cpu().numpy()
 
+            # output orientation
+            mask = torch.zeros(output.shape, dtype=torch.bool, device=target.device)
+            mask[torch.arange(bs).to(device=target.device), target] = True
+            output = output.detach()
+            cos_pos = output[mask].view(-1)
+            cos_neg = output[~mask].view(-1)
+            # cos(gradient, output)
+            if linear.module.weight.grad is not None:
+                gn = torch.index_select(linear.module.weight.grad, dim=0, index=target)
+                gn = torch.nn.functional.normalize(gn, p=2, dim=1)
+                fn = torch.nn.functional.normalize(feature.detach(), p=2, dim=1)
+                cos_grad = (gn*fn).sum(dim=1)
+            else:
+                cos_grad = torch.zeros_like(target)
+
             tfboard_writer.add_scalar("train/iter-lr", lr, epoch*train_loader_len+i)
             tfboard_writer.add_scalar("train/iter-lambda", lam, epoch*train_loader_len+i)
             tfboard_writer.add_scalar("train/iter-acc1", top1.val, epoch*train_loader_len+i)
             tfboard_writer.add_scalar("train/iter-loss", losses.val, epoch*train_loader_len+i)
             tfboard_writer.add_scalar('train/iter-feature-norm', fnorm.mean(), epoch*train_loader_len+i)
             tfboard_writer.add_scalar('train/iter-weight-norm', wnorm.mean(), epoch*train_loader_len+i)
+
+            tfboard_writer.add_histogram('train/iter-cos-pos', cos_pos, epoch*train_loader_len+i)
+            tfboard_writer.add_histogram('train/iter-cos-neg', cos_neg, epoch*train_loader_len+i)
+            tfboard_writer.add_histogram('train/iter-cos-grad', cos_grad, epoch*train_loader_len+i)
 
             logger.info('Epoch[{0}/{1}] Iter[{2}/{3}]\t'
                   'BTime {batch_time.val:.3f} ({batch_time.avg:.3f})\t'

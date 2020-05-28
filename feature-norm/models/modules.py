@@ -13,7 +13,7 @@ class NormLinear(nn.Module):
         self.reset_parameters()
 
     def reset_parameters(self):
-        nn.init.kaiming_uniform_(self.weight, 1.0)
+        nn.init.normal_(self.weight.data, 0, 0.01)
 
     def forward(self, input):
 
