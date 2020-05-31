@@ -239,11 +239,11 @@ def main():
     #                            epochs=args.epochs,
     #                            warmup_epochs=args.warmup_epochs)
 
-    if args.local_rank == 0:
-        lfwacc, lfwthres = test_lfw(model)
-        tfboard_writer.add_scalar('test/lfw-acc', lfwacc, -1)
-        tfboard_writer.add_scalar('test/lfw-thres', lfwthres, -1)
-        logger.info("Initial LFW accuracy %f" % lfwacc)
+    # if args.local_rank == 0:
+    #     lfwacc, lfwthres = test_lfw(model)
+    #     tfboard_writer.add_scalar('test/lfw-acc', lfwacc, -1)
+    #     tfboard_writer.add_scalar('test/lfw-thres', lfwthres, -1)
+    #     logger.info("Initial LFW accuracy %f" % lfwacc)
 
     for epoch in range(args.start_epoch, args.epochs):
         # train and evaluate
@@ -327,6 +327,7 @@ def train(train_loader, model, optimizer, lrscheduler, epoch):
                     lam = (1 - math.cos(lam_effective_iter * math.pi / args.max_lam_iter)) / 2 * args.max_lam
 
         feature = model(data)
+        feature.retain_grad() # retain feature grad
         output = linear(feature)#, target)
         if args.label_smoothing == 0:
             loss = criterion(output, target)
@@ -376,7 +377,6 @@ def train(train_loader, model, optimizer, lrscheduler, epoch):
         torch.cuda.synchronize()
         batch_time.update(time.time() - end)
         end = time.time()
-
         if args.local_rank == 0 and i % args.print_freq == 0:
 
             lr = optimizer.param_groups[0]["lr"]
@@ -389,17 +389,20 @@ def train(train_loader, model, optimizer, lrscheduler, epoch):
             # output orientation
             mask = torch.zeros(output.shape, dtype=torch.bool, device=target.device)
             mask[torch.arange(bs).to(device=target.device), target] = True
-            output = output.detach()
-            cos_pos = output[mask].view(-1)
-            cos_neg = output[~mask].view(-1)
-            # cos(gradient, output)
-            if linear.module.weight.grad is not None:
-                gn = torch.index_select(linear.module.weight.grad, dim=0, index=target)
-                gn = torch.nn.functional.normalize(gn, p=2, dim=1)
-                fn = torch.nn.functional.normalize(feature.detach(), p=2, dim=1)
-                cos_grad = (gn*fn).sum(dim=1)
-            else:
-                cos_grad = torch.zeros_like(target)
+            cos_pos = output[mask].view(-1).detach()
+            cos_neg = output[~mask].view(-1).detach()
+
+            # gradient w.r.t weight
+            g_ = torch.index_select(linear.module.weight.grad, dim=0, index=target)
+            g_ = torch.nn.functional.normalize(g_, p=2, dim=1)
+            # weight
+            d_ = torch.index_select(linear.module.weight.data, dim=0, index=target)
+            d_ = torch.nn.functional.normalize(d_, p=2, dim=1)
+            cos_weight_grad = (g_*d_).sum(dim=1)
+
+            g_ = torch.nn.functional.normalize(feature.grad, p=2, dim=1)
+            d_ = torch.nn.functional.normalize(feature.data, p=2, dim=1)
+            cos_feature_grad = (g_*d_).sum(dim=1)
 
             tfboard_writer.add_scalar("train/iter-lr", lr, epoch*train_loader_len+i)
             tfboard_writer.add_scalar("train/iter-lambda", lam, epoch*train_loader_len+i)
@@ -410,7 +413,9 @@ def train(train_loader, model, optimizer, lrscheduler, epoch):
 
             tfboard_writer.add_histogram('train/iter-cos-pos', cos_pos, epoch*train_loader_len+i)
             tfboard_writer.add_histogram('train/iter-cos-neg', cos_neg, epoch*train_loader_len+i)
-            tfboard_writer.add_histogram('train/iter-cos-grad', cos_grad, epoch*train_loader_len+i)
+
+            tfboard_writer.add_histogram('train/iter-cos-weight-grad', cos_weight_grad, epoch*train_loader_len+i)
+            tfboard_writer.add_histogram('train/iter-cos-feature-grad', cos_feature_grad, epoch*train_loader_len+i)
 
             logger.info('Epoch[{0}/{1}] Iter[{2}/{3}]\t'
                   'BTime {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
