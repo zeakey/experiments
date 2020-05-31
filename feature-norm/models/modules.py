@@ -18,7 +18,7 @@ class NormLinear(nn.Module):
     def forward(self, input):
         input = F.normalize(input, dim=1, p=2)
         weight = F.normalize(self.weight, dim=1, p=2)
-        output = F.linear(input, weight)
+        output = F.linear(input, weight) * self.s
         return output
 
 class MarginLinear(nn.Module):
