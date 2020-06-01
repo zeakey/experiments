@@ -88,8 +88,7 @@ parser.add_argument('--dynamic-loss-scale', action='store_true',
 parser.add_argument("--local_rank", default=0, type=int)
 # margin
 # cos(m1\theta + m2)
-parser.add_argument("--m1", default=1, type=int)
-parser.add_argument("--m2", default=0, type=float)
+parser.add_argument("--margin", default=0.5, type=float)
 parser.add_argument("--s", default=64, type=float)
 parser.add_argument("--max-lam", default=0.1666, type=float)
 parser.add_argument("--max-lam-iter", default=2000, type=int)
@@ -182,12 +181,16 @@ def main():
     train_loader = DALIClassificationIterator(pipe, size=int(pipe.epoch_size("Reader") / args.world_size))
     train_loader_len = int(train_loader._size / args.batch_size)
 
-    # model and optimizer
-    # model = preact_resnet.resnet34()
     model = args.model+"().cuda()"
-    # linear = args.linear+"(in_features=512, out_features=%d).cuda()" % (args.num_classes)
-    # linear = "nn.Linear(512, args.num_classes).cuda()"
-    linear = "modules.NormLinear(512, args.num_classes, s=args.s).cuda()"
+    if args.linear == "modules.NormLinear":
+        linear = "modules.NormLinear(512, args.num_classes, s=args.s).cuda()"
+    elif args.linear == "modules.ArcLinear":
+        linear = "modules.ArcLinear(512, args.num_classes, s=args.s, m=args.margin).cuda()"
+    elif args.linear == "nn.Linear":
+        linear = "nn.Linear(512, args.num_classes).cuda()"
+    else:
+        raise ValueError("Unknown Linear type %s"%args.linear)
+
     model = eval(model)
     linear = eval(linear)
 
@@ -328,7 +331,12 @@ def train(train_loader, model, optimizer, lrscheduler, epoch):
 
         feature = model(data)
         feature.retain_grad() # retain feature grad
-        output = linear(feature)#, target)
+
+        if args.linear == "modules.NormLinear" or args.linear == "nn.Linear":
+            output = linear(feature)
+        else:
+            output = linear(feature, target)
+
         if args.label_smoothing == 0:
             loss = criterion(output, target)
         else:
