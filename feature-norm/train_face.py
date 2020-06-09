@@ -142,7 +142,7 @@ class HybridTrainPipe(Pipeline):
 
 # loss function
 if args.label_smoothing == 0:
-    criterion = torch.nn.CrossEntropyLoss()
+    criterion = torch.nn.CrossEntropyLoss(reduction="none")
 else:
     criterion = torch.nn.KLDivLoss(reduction="batchmean")
 
@@ -337,8 +337,19 @@ def train(train_loader, model, optimizer, lrscheduler, epoch):
         else:
             output = linear(feature, target)
 
+        cosine = output.detach() / args.s
+
         if args.label_smoothing == 0:
             loss = criterion(output, target)
+            loss = loss.mean()
+            # loss_weight = cosine[torch.arange(bs), target] / args.s
+            # assert torch.all(loss_weight >= -1)
+            # assert torch.all(loss_weight <= +1)
+            # loss_weight.clamp_(0, 1)
+            # loss_weight = 1 - loss_weight
+            # # loss_weight = exp(alpha * cos) / beta
+            # loss_weight = torch.exp(5 * loss_weight)
+            # loss = (loss * loss_weight).mean()
         else:
             with torch.no_grad():
                 label_distr = torch.zeros_like(output)
@@ -397,8 +408,8 @@ def train(train_loader, model, optimizer, lrscheduler, epoch):
             # output orientation
             mask = torch.zeros(output.shape, dtype=torch.bool, device=target.device)
             mask[torch.arange(bs).to(device=target.device), target] = True
-            cos_pos = output[mask].view(-1).detach()
-            cos_neg = output[~mask].view(-1).detach()
+            cos_pos = cosine[mask].view(-1).detach()
+            cos_neg = cosine[~mask].view(-1).detach()
 
             # gradient w.r.t weight
             g_ = torch.index_select(linear.module.weight.grad, dim=0, index=target)
