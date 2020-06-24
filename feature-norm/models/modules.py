@@ -4,12 +4,17 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn import Parameter
 
+def shift_softmax(x, eps=10-6):
+    x = torch.exp(x+1) - 1 + eps
+    assert torch.all(x > 0)
+    y = x.sum(dim=1).view(-1, 1)
+    return x / y
+
+
 class NormLinear(nn.Module):
-    def __init__(self, in_features, out_features, s=64):
+    def __init__(self, in_features, out_features):
         super(NormLinear, self).__init__()
         self.weight = Parameter(torch.FloatTensor(out_features, in_features))
-        self.s = s
-
         self.reset_parameters()
 
     def reset_parameters(self):
@@ -18,7 +23,7 @@ class NormLinear(nn.Module):
     def forward(self, input):
         input = F.normalize(input, dim=1, p=2)
         weight = F.normalize(self.weight, dim=1, p=2)
-        output = F.linear(input, weight) * self.s
+        output = F.linear(input, weight)
         return output
 
 class MarginLinear(nn.Module):
@@ -96,10 +101,9 @@ class ArcLinear(nn.Module):
     """
     ArcFace
     """
-    def __init__(self, in_features, out_features, s=64, m=0.5):
+    def __init__(self, in_features, out_features, m=0.5):
         super(ArcLinear, self).__init__()
         self.weight = Parameter(torch.FloatTensor(out_features, in_features))
-        self.s = s
         self.m = m
         self.cos_m = math.cos(self.m)
         self.sin_m = math.sin(self.m)
@@ -114,8 +118,7 @@ class ArcLinear(nn.Module):
         cosine = F.linear(F.normalize(input), F.normalize(self.weight))
 
         if label is None or self.m == 0:
-            output = cosine * self.s
-            return output
+            return cosine
 
         # sin(theta)
         sine = torch.sqrt(1.0 - torch.pow(cosine, 2))
@@ -128,7 +131,48 @@ class ArcLinear(nn.Module):
         one_hot.scatter_(1, label.view(-1, 1).long(), 1)
 
         output = one_hot*psi_theta + (1-one_hot)*cosine
-        output *= self.s
+        return output
+
+class ArcLinear2(nn.Module):
+    """
+    ArcFace
+    """
+    def __init__(self, in_features, out_features, m1=0.5, m2=0.2):
+        super(ArcLinear2, self).__init__()
+        self.weight = Parameter(torch.FloatTensor(out_features, in_features))
+        self.m1 = m1
+        self.m2 = m2
+        self.cos_m1 = math.cos(self.m1)
+        self.sin_m1 = math.sin(self.m1)
+
+        self.cos_m2 = math.cos(self.m2)
+        self.sin_m2 = math.sin(self.m2)
+
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        nn.init.xavier_uniform_(self.weight)
+
+    def forward(self, input, label=None):
+
+        cosine = F.linear(F.normalize(input), F.normalize(self.weight))
+
+        # sin(theta)
+        sine = torch.sqrt(1.0 - torch.pow(cosine, 2))
+
+        # psi1 = cos(theta + m1)
+        psi_theta1 = cosine*self.cos_m1 - sine*self.sin_m1
+        psi_theta1 = torch.where(cosine > -self.cos_m1, psi_theta1, -psi_theta1-2)
+
+        # psi2 = cos(theta - m2)
+        psi_theta2 = cosine*self.cos_m2 + sine*self.sin_m2
+        psi_theta2 = torch.where(cosine < self.cos_m2, psi_theta2, -psi_theta2+2)
+
+        one_hot = torch.zeros_like(cosine)
+        one_hot.scatter_(1, label.view(-1, 1).long(), 1)
+
+        output = one_hot * psi_theta1 + (1-one_hot) * psi_theta2
+
         return output
 
 class ArcMarginModel(nn.Module):
