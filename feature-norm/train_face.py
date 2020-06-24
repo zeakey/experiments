@@ -87,8 +87,8 @@ parser.add_argument('--dynamic-loss-scale', action='store_true',
 # distributed
 parser.add_argument("--local_rank", default=0, type=int)
 # margin
-# cos(m1\theta + m2)
-parser.add_argument("--margin", default=0.5, type=float)
+parser.add_argument("--m1", default=0.5, type=float)
+parser.add_argument("--m2", default=0.1, type=float)
 parser.add_argument("--s", default=64, type=float)
 parser.add_argument("--max-lam", default=0.1666, type=float)
 parser.add_argument("--max-lam-iter", default=2000, type=int)
@@ -183,13 +183,18 @@ def main():
 
     model = args.model+"().cuda()"
     if args.linear == "modules.NormLinear":
-        linear = "modules.NormLinear(512, args.num_classes, s=args.s).cuda()"
+        linear = "modules.NormLinear(512, args.num_classes).cuda()"
     elif args.linear == "modules.ArcLinear":
-        linear = "modules.ArcLinear(512, args.num_classes, s=args.s, m=args.margin).cuda()"
+        linear = "modules.ArcLinear(512, args.num_classes, m=%f).cuda()" % args.m1
+    elif args.linear == "modules.ArcLinear2":
+        linear = "modules.ArcLinear2(512, args.num_classes, m1=%f, m2=%f).cuda()" %(args.m1, args.m2)
     elif args.linear == "nn.Linear":
         linear = "nn.Linear(512, args.num_classes).cuda()"
     else:
         raise ValueError("Unknown Linear type %s"%args.linear)
+
+    if args.local_rank == 0:
+        logger.info("linear: %s" % linear)
 
     model = eval(model)
     linear = eval(linear)
@@ -241,12 +246,6 @@ def main():
     #                            max_lr=args.lr, min_lr=1e-5,
     #                            epochs=args.epochs,
     #                            warmup_epochs=args.warmup_epochs)
-
-    # if args.local_rank == 0:
-    #     lfwacc, lfwthres = test_lfw(model)
-    #     tfboard_writer.add_scalar('test/lfw-acc', lfwacc, -1)
-    #     tfboard_writer.add_scalar('test/lfw-thres', lfwthres, -1)
-    #     logger.info("Initial LFW accuracy %f" % lfwacc)
 
     for epoch in range(args.start_epoch, args.epochs):
         # train and evaluate
@@ -316,19 +315,6 @@ def train(train_loader, model, optimizer, lrscheduler, epoch):
         data_time.update(time.time() - end)
         iter_index = epoch * train_loader_len + i
 
-        if epoch < args.warmup_epochs:
-            lam = 0
-        else:
-            lam_effective_iter = (epoch - args.warmup_epochs) * train_loader_len + i
-            if False:
-                lam = max(5, 1000 / (lam_effective_iter * 0.1 + 1))
-                lam = 1 / (1 + lam)
-            else:
-                if lam_effective_iter >= args.max_lam_iter:
-                    lam = args.max_lam
-                else:
-                    lam = (1 - math.cos(lam_effective_iter * math.pi / args.max_lam_iter)) / 2 * args.max_lam
-
         feature = model(data)
         feature.retain_grad() # retain feature grad
 
@@ -337,10 +323,11 @@ def train(train_loader, model, optimizer, lrscheduler, epoch):
         else:
             output = linear(feature, target)
 
-        cosine = output.detach() / args.s
-
         if args.label_smoothing == 0:
-            loss = criterion(output, target)
+            # loss = torch.nn.functional.softmax((output+1)*args.s, dim=1)
+            # loss = torch.log(loss)
+            # loss = torch.nn.functional.nll_loss(loss, target)
+            loss = criterion(output*args.s, target)
             loss = loss.mean()
             # loss_weight = cosine[torch.arange(bs), target] / args.s
             # assert torch.all(loss_weight >= -1)
@@ -397,7 +384,9 @@ def train(train_loader, model, optimizer, lrscheduler, epoch):
         batch_time.update(time.time() - end)
         end = time.time()
         if args.local_rank == 0 and i % args.print_freq == 0:
-
+            fn = torch.nn.functional.normalize(feature.detach(), dim=1)
+            wn = torch.nn.functional.normalize(linear.module.weight.data, dim=1)
+            cosine = torch.mm(fn, wn.t())
             lr = optimizer.param_groups[0]["lr"]
             fnorm = torch.norm(feature.float(), p=2, dim=1).detach().cpu().numpy()
             if args.distributed:
@@ -407,7 +396,7 @@ def train(train_loader, model, optimizer, lrscheduler, epoch):
 
             # output orientation
             mask = torch.zeros(output.shape, dtype=torch.bool, device=target.device)
-            mask[torch.arange(bs).to(device=target.device), target] = True
+            mask.scatter_(1, target.view(-1, 1).long(), 1)
             cos_pos = cosine[mask].view(-1).detach()
             cos_neg = cosine[~mask].view(-1).detach()
 
@@ -424,7 +413,6 @@ def train(train_loader, model, optimizer, lrscheduler, epoch):
             cos_feature_grad = (g_*d_).sum(dim=1)
 
             tfboard_writer.add_scalar("train/iter-lr", lr, epoch*train_loader_len+i)
-            tfboard_writer.add_scalar("train/iter-lambda", lam, epoch*train_loader_len+i)
             tfboard_writer.add_scalar("train/iter-acc1", top1.val, epoch*train_loader_len+i)
             tfboard_writer.add_scalar("train/iter-loss", losses.val, epoch*train_loader_len+i)
             tfboard_writer.add_scalar('train/iter-feature-norm', fnorm.mean(), epoch*train_loader_len+i)
@@ -441,10 +429,10 @@ def train(train_loader, model, optimizer, lrscheduler, epoch):
                   'DTime {data_time.val:.3f} ({data_time.avg:.3f})\t'
                   'Train Loss {loss.val:.3f} ({loss.avg:.3f})\t'
                   'Prec@1 {top1.val:.3f} ({top1.avg:.3f})\t'
-                  'LR: {lr:.2E} lambda: {lambd:.2E}'.format(
+                  'LR: {lr:.2E}'.format(
                    epoch, args.epochs, i, train_loader_len,
                    batch_time=batch_time, data_time=data_time, loss=losses, top1=top1,
-                   lr=lr, lambd=lam))
+                   lr=lr))
 
         if args.local_rank == 0 and iter_index % 1000 == 0:
             N = 16
