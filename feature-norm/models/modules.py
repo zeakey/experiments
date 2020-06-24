@@ -160,13 +160,19 @@ class ArcLinear2(nn.Module):
         # sin(theta)
         sine = torch.sqrt(1.0 - torch.pow(cosine, 2))
 
-        # psi1 = cos(theta + m1)
-        psi_theta1 = cosine*self.cos_m1 - sine*self.sin_m1
-        psi_theta1 = torch.where(cosine > -self.cos_m1, psi_theta1, -psi_theta1-2)
+        if self.m1 > 0:
+            # psi1 = cos(theta + m1)
+            psi_theta1 = cosine*self.cos_m1 - sine*self.sin_m1
+            psi_theta1 = torch.where(cosine > -self.cos_m1, psi_theta1, -psi_theta1-2)
+        else:
+            psi_theta1 = cosine
 
-        # psi2 = cos(theta - m2)
-        psi_theta2 = cosine*self.cos_m2 + sine*self.sin_m2
-        psi_theta2 = torch.where(cosine < self.cos_m2, psi_theta2, -psi_theta2+2)
+        if self.m2 > 0:
+            # psi2 = cos(theta - m2)
+            psi_theta2 = cosine*self.cos_m2 + sine*self.sin_m2
+            psi_theta2 = torch.where(cosine < self.cos_m2, psi_theta2, -psi_theta2+2)
+        else:
+            psi_theta2 = cosine
 
         one_hot = torch.zeros_like(cosine)
         one_hot.scatter_(1, label.view(-1, 1).long(), 1)
