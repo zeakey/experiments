@@ -95,14 +95,23 @@ class MyRPNHead(RPNHead):
         bar_x_targets, bar_y_targets = self.get_bar_targets((H, W), gt_bboxes)
         
         # calculate loss weight for each element
-        bar_x_w = torch.zeros_like(bar_x_preds[0])
-        bar_y_w = torch.zeros_like(bar_y_preds[0])
+        bar_x_w = torch.empty_like(bar_x_preds[0])
+        bar_y_w = torch.empty_like(bar_y_preds[0])
         #
-        bar_x_w[bar_x_targets==1] = 1 - bar_x_targets.mean()
-        bar_x_w[bar_x_targets==0] = bar_x_targets.mean()
-        #
-        bar_y_w[bar_y_targets==1] = 1 - bar_y_targets.mean()
-        bar_y_w[bar_y_targets==0] = bar_y_targets.mean()
+        if bar_x_targets.sum() > 0:
+            assert bar_y_targets.sum() > 0
+
+            bar_x_w[bar_x_targets==1] = 1 - bar_x_targets.mean()
+            bar_x_w[bar_x_targets==0] = bar_x_targets.mean()
+
+            bar_y_w[bar_y_targets==1] = 1 - bar_y_targets.mean()
+            bar_y_w[bar_y_targets==0] = bar_y_targets.mean()
+            
+            bar_y_w /= bar_y_w.mean()
+            bar_x_w /= bar_x_w.mean()
+        else:
+            bar_x_w.fill_(1)
+            bar_y_w.fill_(1)
         
         bar_x_loss = torch.nn.functional.binary_cross_entropy(bar_x_preds[0], bar_x_targets, weight=bar_x_w)
         bar_y_loss = torch.nn.functional.binary_cross_entropy(bar_y_preds[0], bar_y_targets, weight=bar_y_w)
@@ -189,7 +198,8 @@ class MyRPNHead(RPNHead):
             img_shape = img_metas[img_id]['img_shape']
             scale_factor = img_metas[img_id]['scale_factor']
             proposals = self._get_bboxes_single(cls_score_list, bbox_pred_list,
-                                                bar_x_preds[0][img_id].squeeze(), bar_y_preds[0][img_id].squeeze(),
+                                                bar_x_preds[0][img_id].squeeze().detach(),
+                                                bar_y_preds[0][img_id].squeeze().detach(),
                                                 mlvl_anchors, img_shape,
                                                 scale_factor, cfg, rescale, gt_bboxes=gt_bboxes[img_id] if gt_bboxes else None)
             result_list.append(proposals)
