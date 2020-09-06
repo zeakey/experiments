@@ -41,7 +41,7 @@ parser.add_argument('--test-data', metavar='DIR', default="data/ecssd", help='pa
 parser.add_argument('--use-rec', action='store_true', help='Use mxnet record.')
 parser.add_argument('--batch-size', default=20, type=int, metavar='N', help='mini-batch size')
 parser.add_argument('--imsize', default=432, type=int, metavar='N', help='im crop size')
-parser.add_argument('-j', '--workers', default=4, type=int, help='number of data loading workers')
+parser.add_argument('-j', '--workers', default=1, type=int, help='number of data loading workers')
 # optimization
 parser.add_argument('--epochs', default=20, type=int, metavar='N',
                     help='number of total epochs to run')
@@ -146,6 +146,19 @@ test_loader = torch.utils.data.DataLoader(
 
 train_loader_len = len(train_loader)
 
+
+def l2loss(x, y, mask=None):
+    assert x.shape == y.shape
+
+    loss = (x - y)**2
+    loss = loss.sum(dim=1).sqrt().unsqueeze(dim=1)
+    if mask is not None:
+        loss = (loss * mask).sum() / mask.sum()
+    else:
+        loss = loss.mean()
+    return loss
+
+
 def main():
     if args.local_rank == 0:
         logger.info(args)
@@ -176,8 +189,8 @@ def main():
 
     if args.distributed:
         model = DDP(model, delay_allreduce=True)
-    else:
-        model = torch.nn.DataParallel(model)
+    # else:
+    #     model = torch.nn.DataParallel(model)
 
     if args.local_rank == 0:
         logger.info(optimizer)
@@ -226,6 +239,7 @@ def train_epoch(model, train_loader, optimizer, lrscheduler, epoch):
     batch_time = AverageMeter()
     data_time = AverageMeter()
     losses = AverageMeter()
+    flux_losses = AverageMeter()
 
     train_loader_len = len(train_loader)
     # switch to train mode
@@ -236,24 +250,33 @@ def train_epoch(model, train_loader, optimizer, lrscheduler, epoch):
 
         image = data["image"]
         target = data["label"].long()
+        flux_target = data["flux"]
+        flux_mask = data["flux_mask"]
         if args.distributed:
             image = image.cuda(non_blocking=True).to(dtype=DTYPE)
+
+        image = image.cuda(non_blocking=True)
         target = target.cuda(non_blocking=True)
+        flux_target = flux_target.cuda(non_blocking=True)
+        flux_mask = flux_mask.cuda(non_blocking=True)
 
         # measure data loading time
         data_time.update(time.time() - end)
         output = model(image)
 
-        target = target.to(dtype=output.dtype)
-        # loss = criterion(torch.sigmoid(output), target)
-        loss = torch.nn.functional.binary_cross_entropy(torch.sigmoid(output), target)
+        target = target.to(dtype=output[0].dtype)
+        loss = torch.nn.functional.binary_cross_entropy(torch.sigmoid(output[0]), target)
+        flux_loss = l2loss(output[1], flux_target, flux_mask)
 
         if args.distributed:
             reduced_loss = reduce_tensor(loss.data)
+            reduced_loss = reduce_tensor(loss.data)
         else:
+            reduced_flux_loss = flux_loss.data
             reduced_loss = loss.data
 
         losses.update(reduced_loss.item(), image.size(0))
+        flux_losses.update(reduced_flux_loss.item(), image.size(0))
 
         # compute and adjust lr
         if lrscheduler is not None:
@@ -262,6 +285,7 @@ def train_epoch(model, train_loader, optimizer, lrscheduler, epoch):
                 param_group['lr'] = lr
 
         # compute gradient and do SGD step
+        loss = loss + flux_loss
         optimizer.zero_grad()
 
         # scale loss before backward
@@ -285,10 +309,11 @@ def train_epoch(model, train_loader, optimizer, lrscheduler, epoch):
             logger.info('Epoch[{0}/{1}] It[{2}/{3}]\t'
                   'Batch Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
                   'Data Time {data_time.val:.3f} ({data_time.avg:.3f})\t'
-                  'Train Loss {loss.val:.3f} ({loss.avg:.3f})\t'
+                  'CE Loss {loss.val:.3f} ({loss.avg:.3f})\t'
+                  'Flux Loss {flux_loss.val:.3f} ({flux_loss.avg:.3f})\t'
                   'LR: {lr:.2E}'.format(
                    epoch, args.epochs, i, train_loader_len,
-                   batch_time=batch_time, data_time=data_time, loss=losses, lr=lr))
+                   batch_time=batch_time, data_time=data_time, loss=losses, flux_loss=flux_losses, lr=lr))
 
         # if args.local_rank == 0 and i == 0:
         #     data = torchvision.utils.make_grid(image, normalize=True)
