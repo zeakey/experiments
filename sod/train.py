@@ -12,9 +12,7 @@ from torch.utils.tensorboard import SummaryWriter
 from PIL import Image
 from vlkit.training import get_logger
 from vlkit import image as vlimage
-from vlkit.pytorch import save_checkpoint, AverageMeter, accuracy
-from vlkit.pytorch.datasets import ilsvrc2012
-import vlkit.pytorch as vlpytorch
+from vlkit.pytorch import save_checkpoint, AverageMeter
 from vlkit.lr import CosAnnealingLR, MultiStepLR
 # distributed
 import torch.distributed as dist
@@ -24,7 +22,7 @@ import warnings
 warnings.filterwarnings("ignore", "(Possibly )?corrupt EXIF data", UserWarning)
 from drn_seg import DRNSeg
 from dataset import SODDataset
-from utils import save_maps, get_full_image_names, load_batch_images, batch_mva, evaluate_maps, init_from_pretrained
+from utils import accuracy, init_from_pretrained
 from crf import par_batch_crf_dataloader
 from floss import FLoss, F_cont
 
@@ -220,7 +218,7 @@ def main():
     lr_scheduler = CosAnnealingLR(loader_len=len(train_loader), epochs=args.epochs, max_lr=args.lr, min_lr=1e-3, warmup_epochs=args.warmup_epochs)
     for epoch in range(args.epochs):
         train_loss = train_epoch(model, train_loader, optimizer, lr_scheduler, epoch)
-        test_mae, test_f = test(model, test_loader, epoch)
+        test_mae, test_f, ori_acc = test(model, test_loader, epoch)
         
 
         if args.local_rank == 0:
@@ -228,6 +226,7 @@ def main():
             tfboard_writer.add_scalar("train/lr", optimizer.param_groups[0]["lr"], epoch)
             tfboard_writer.add_scalar("test/mae", test_mae, epoch)
             tfboard_writer.add_scalar("test/F-measure", test_f, epoch)
+            tfboard_writer.add_scalar("test/Orientation-Accuracy", ori_acc, epoch)
             
 
 
@@ -331,6 +330,7 @@ def test(model, test_loader, epoch):
     losses = AverageMeter()
     mae =  AverageMeter()
     fmeasure = AverageMeter()
+    ori_acc1 = AverageMeter()
     # switch to evaluate mode
     model.eval()
     test_loader_len = len(test_loader)
@@ -340,15 +340,21 @@ def test(model, test_loader, epoch):
         for i, data in enumerate(test_loader):
             image = data["image"].cuda()
             target = data["label"].cuda().float()
+            mask = data["mask"].cuda()
+            orientation = data["orientation"].cuda().long()
 
             # compute output
-            output, _ = model(image)
-            output = torch.sigmoid(output)
-            loss = torch.nn.functional.binary_cross_entropy(output, target)
+            output = model(image)
+            seg_pred = torch.sigmoid(output[0])
+            loss = torch.nn.functional.binary_cross_entropy(seg_pred, target)
+
+            ori_pred = output[1].transpose(0,1)[:, mask].t()
+            ori_gt = orientation[mask]
+            top1, top2 = accuracy(ori_pred, ori_gt, topk=(1,2))
 
             # mae and F-measure
-            mae_ = (output - target).abs().mean()
-            f_ = floss(output, target)
+            mae_ = (seg_pred - target).abs().mean()
+            f_ = floss(seg_pred, target)
 
             if args.distributed:
                 reduced_loss = reduce_tensor(loss.data)
@@ -363,6 +369,7 @@ def test(model, test_loader, epoch):
             losses.update(reduced_loss.item(), image.size(0))
             mae.update(reduced_mae.item(), image.size(0))
             fmeasure.update(reduced_f.item(), image.size(0))
+            ori_acc1.update(top1.item(), image.size(0))
             # measure elapsed time
             batch_time.update(time.time() - end)
             end = time.time()
@@ -370,13 +377,15 @@ def test(model, test_loader, epoch):
             if args.local_rank == 0 and i % args.print_freq == 0:
                 logger.info('Test: [{0}/{1}]\t'
                       'Test Loss {loss.val:.3f} (avg={loss.avg:.3f})\t'
-                      'MAE {mae.val:.3f} (avg={mae.avg:.3f}) F {fmeasure.val:3f} (avg={fmeasure.avg:.3f})'.format(
-                       i, test_loader_len, loss=losses, mae=mae, fmeasure=fmeasure))
+                      'MAE {mae.val:.3f} (avg={mae.avg:.3f}) F {fmeasure.val:3f} (avg={fmeasure.avg:.3f})\t'
+                      'OriAcc={ori_acc.avg:.3f}\t'.format(
+                       i, test_loader_len, loss=losses, mae=mae, fmeasure=fmeasure, ori_acc=ori_acc1))
 
     if args.local_rank == 0:
-        logger.info(' * MAE {mae.avg:.5f} F-measure {fmeasure.avg:.5f}'.format(mae=mae, fmeasure=fmeasure))
+        logger.info(' * MAE {mae.avg:.5f} F-measure {fmeasure.avg:.5f} OriAcc={ori_acc.avg:.3f}'\
+            .format(mae=mae, fmeasure=fmeasure, ori_acc=ori_acc1))
 
-    return mae.avg, fmeasure.avg
+    return mae.avg, fmeasure.avg, ori_acc1
 
 def reduce_tensor(tensor):
     rt = tensor.clone()
