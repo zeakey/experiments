@@ -3,16 +3,15 @@ from PIL import Image
 import numpy as np
 from scipy.ndimage.morphology import distance_transform_edt
 from os.path import join, isdir, isfile
+from skimage.filters import sobel_h, sobel_v
 
 def seg2edge(seg):
-    seg[seg < seg.max()/2] = 0
-    seg[seg != 0] = 1
-    grad = np.gradient(seg)
+    grad = np.gradient(seg.astype(np.float32))
     grad = np.sqrt(grad[0]**2 + grad[1]**2)
 
     return grad != 0
 
-def fluid_field(edge):
+def edge2flux(edge):
     H, W = edge.shape
 
     yy = np.arange(H).reshape(H, 1)
@@ -30,9 +29,39 @@ def fluid_field(edge):
     # normalize
     norm = np.sqrt(np.sum(field**2, axis=0))
     norm[norm==0] = 1
-    field = field / norm
+    field = (field / norm).astype(np.float32)
 
-    return field, dist
+    return field, dist.astype(np.float32)
+
+def dist2flux(dist):
+    gx = np.expand_dims(sobel_h(dist), axis=0)
+    gy = np.expand_dims(sobel_v(dist), axis=0)
+    flux = np.concatenate((gy, gx), axis=0)
+
+    # normalize
+    norm = np.expand_dims(np.sqrt((flux**2).sum(axis=0)), axis=0)
+    norm[norm==0] = 1
+    flux /= norm
+
+    return flux
+
+def flux2angle(flux):
+    """
+    flux: a [2, H, W] tesnro represents the flux vector of each position
+    """
+    _, H, W = flux.shape
+    top_half = flux[0,...] >= 0 # y >= 0, \theta <= \pi
+    bottom_half = flux[0,...] < 0 # y < 0, \theta > \pi
+    
+    unit = np.zeros((2, H, W), dtype=np.float32)
+    unit[1,...] = 1 # unit vector: (y=0, x=1)
+    cos = (flux * unit).sum(axis=0)
+    acos = np.arccos(cos)
+    angle = np.zeros((H, W), dtype=np.float32)
+    angle[top_half] = acos[top_half]
+    angle[bottom_half] = 2*np.pi - acos[bottom_half]
+
+    return angle
 
 class SODDatasetDual(torch.utils.data.Dataset):
     def __init__(self, img_dir, label_dirs, name_list, flip=False, image_transform=None, label_transform=None):
@@ -125,13 +154,24 @@ class SODDataset(torch.utils.data.Dataset):
             label = self.label_transform(label)
 
         label = np.array(label).astype(bool)
+        
+        edge = seg2edge(label)
+        dist = distance_transform_edt(np.logical_not(edge))
+        angle = flux2angle(dist2flux(dist))
+        mask = dist <= 10
+        orientation = np.floor(angle / (np.pi*2/8)).astype(np.uint8)
+
         label = np.expand_dims(label, axis=0)
-        # edge = seg2edge(label)
+        edge = np.expand_dims(edge, axis=0)
+        # orientation = np.expand_dims(orientation, axis=0)
+        # mask = np.expand_dims(mask, axis=0)
 
         result = dict({
             "image": image,
             "label": label,
-            # "edge": edge
+            "edge": edge,
+            "orientation": orientation,
+            "mask": mask,
         })
 
         return result

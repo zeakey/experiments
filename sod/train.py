@@ -1,7 +1,7 @@
 # https://github.com/NVIDIA/DALI/blob/master/docs/examples/pytorch/resnet50/main.py
 import torch, torchvision
 import torch.nn as nn
-from torch.optim import lr_scheduler
+import torch.nn.functional as F
 import torchvision
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
@@ -34,7 +34,7 @@ parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                     help='manual epoch number (useful on restarts)')
 parser.add_argument('--print-freq', default=5, type=int,
                     metavar='N', help='print frequency (default: 10)')
-parser.add_argument('--arch', '--a', metavar='STR', default="drn_d_105", help='model')
+parser.add_argument('--arch', '--a', metavar='STR', default="drn_d_38", help='model')
 # data
 parser.add_argument('--train-data', metavar='DIR', default="data/ecssd", help='path to dataset')
 parser.add_argument('--test-data', metavar='DIR', default="data/ecssd", help='path to dataset')
@@ -59,7 +59,7 @@ parser.add_argument('--weight-decay', '--wd', default=1e-4, type=float,
 parser.add_argument('--resume', default="", type=str, metavar='PATH',
                     help='path to latest checkpoint')
 parser.add_argument('--tmp', help='tmp folder', default="tmp")
-parser.add_argument('--pretrained', help='pretrained model', type=str, default="Pretrained_Models/drn_pretraining/drn-d-105_ms_cityscapes.pth")
+parser.add_argument('--pretrained', help='pretrained model', type=str, default="Pretrained_Models/drn_pretraining/drn_d_38_cityscapes.pth")
 # Loss function
 parser.add_argument('--loss', help='loss function', type=str, default="ce")
 parser.add_argument('--floss-beta', help='floss beta', type=float, default=1)
@@ -110,7 +110,7 @@ if args.fp16:
 
 
 floss = FLoss(beta=args.floss_beta)
-criterion = nn.CrossEntropyLoss()
+CELoss = nn.CrossEntropyLoss()
 
 
 normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
@@ -157,6 +157,7 @@ def l2loss(x, y, mask=None):
     else:
         loss = loss.mean()
     return loss
+
 
 
 def main():
@@ -216,16 +217,18 @@ def main():
             if args.local_rank == 0:
                 logger.info("=> no checkpoint found at '{}'".format(args.resume))
 
-    lrscheduler = CosAnnealingLR(loader_len=len(train_loader), epochs=args.epochs, max_lr=args.lr)
+    lr_scheduler = CosAnnealingLR(loader_len=len(train_loader), epochs=args.epochs, max_lr=args.lr, min_lr=1e-3, warmup_epochs=args.warmup_epochs)
     for epoch in range(args.epochs):
-        train_loss = train_epoch(model, train_loader, optimizer, lrscheduler, epoch)
+        train_loss = train_epoch(model, train_loader, optimizer, lr_scheduler, epoch)
         test_mae, test_f = test(model, test_loader, epoch)
         
 
         if args.local_rank == 0:
             tfboard_writer.add_scalar("train/F-measure", train_loss, epoch)
+            tfboard_writer.add_scalar("train/lr", optimizer.param_groups[0]["lr"], epoch)
             tfboard_writer.add_scalar("test/mae", test_mae, epoch)
             tfboard_writer.add_scalar("test/F-measure", test_f, epoch)
+            
 
 
     if args.local_rank == 0:
@@ -235,11 +238,11 @@ def main():
             h.close()
 
 
-def train_epoch(model, train_loader, optimizer, lrscheduler, epoch):
+def train_epoch(model, train_loader, optimizer, lr_scheduler, epoch):
     batch_time = AverageMeter()
     data_time = AverageMeter()
     losses = AverageMeter()
-    flux_losses = AverageMeter()
+    orientation_losses = AverageMeter()
 
     train_loader_len = len(train_loader)
     # switch to train mode
@@ -250,42 +253,42 @@ def train_epoch(model, train_loader, optimizer, lrscheduler, epoch):
 
         image = data["image"]
         target = data["label"].long()
-        flux_target = data["flux"]
-        flux_mask = data["flux_mask"]
+        orientation = data["orientation"]
+        mask = data["mask"]
         if args.distributed:
             image = image.cuda(non_blocking=True).to(dtype=DTYPE)
 
         image = image.cuda(non_blocking=True)
-        target = target.cuda(non_blocking=True)
-        flux_target = flux_target.cuda(non_blocking=True)
-        flux_mask = flux_mask.cuda(non_blocking=True)
+        target = target.cuda(non_blocking=True).float()
+        orientation = orientation.cuda(non_blocking=True).long()
+        mask = mask.cuda(non_blocking=True)
 
         # measure data loading time
         data_time.update(time.time() - end)
         output = model(image)
 
-        target = target.to(dtype=output[0].dtype)
         loss = torch.nn.functional.binary_cross_entropy(torch.sigmoid(output[0]), target)
-        flux_loss = l2loss(output[1], flux_target, flux_mask)
+        orientation_loss = F.cross_entropy(output[1], orientation, reduction="none")
+        orientation_loss = (orientation_loss*mask).sum() / mask.sum()
 
         if args.distributed:
             reduced_loss = reduce_tensor(loss.data)
-            reduced_loss = reduce_tensor(loss.data)
+            reduced_orientation_loss = reduce_tensor(orientation_loss.data)
         else:
-            reduced_flux_loss = flux_loss.data
             reduced_loss = loss.data
+            reduced_orientation_loss = orientation_loss.data
 
         losses.update(reduced_loss.item(), image.size(0))
-        flux_losses.update(reduced_flux_loss.item(), image.size(0))
+        orientation_losses.update(reduced_orientation_loss.item(), image.size(0))
 
         # compute and adjust lr
-        if lrscheduler is not None:
-            lr = lrscheduler.step()
+        if lr_scheduler is not None:
+            lr = lr_scheduler.step()
             for param_group in optimizer.param_groups:
                 param_group['lr'] = lr
 
         # compute gradient and do SGD step
-        loss = loss + flux_loss
+        loss = loss + orientation_loss
         optimizer.zero_grad()
 
         # scale loss before backward
@@ -309,11 +312,11 @@ def train_epoch(model, train_loader, optimizer, lrscheduler, epoch):
             logger.info('Epoch[{0}/{1}] It[{2}/{3}]\t'
                   'Batch Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
                   'Data Time {data_time.val:.3f} ({data_time.avg:.3f})\t'
-                  'CE Loss {loss.val:.3f} ({loss.avg:.3f})\t'
-                  'Flux Loss {flux_loss.val:.3f} ({flux_loss.avg:.3f})\t'
+                  'SegLoss {loss.val:.3f} ({loss.avg:.3f})\t'
+                  'OriLoss {orientation_loss.val:.3f} ({orientation_loss.avg:.3f})\t'
                   'LR: {lr:.2E}'.format(
                    epoch, args.epochs, i, train_loader_len,
-                   batch_time=batch_time, data_time=data_time, loss=losses, flux_loss=flux_losses, lr=lr))
+                   batch_time=batch_time, data_time=data_time, loss=losses, orientation_loss=orientation_losses, lr=lr))
 
         # if args.local_rank == 0 and i == 0:
         #     data = torchvision.utils.make_grid(image, normalize=True)
@@ -336,13 +339,12 @@ def test(model, test_loader, epoch):
         end = time.time()
         for i, data in enumerate(test_loader):
             image = data["image"].cuda()
-            target = data["label"].cuda()
+            target = data["label"].cuda().float()
 
             # compute output
-            output = model(image)
+            output, _ = model(image)
             output = torch.sigmoid(output)
-            target = target.to(dtype=output.dtype)
-            loss = torch.nn.functional.binary_cross_entropy(torch.sigmoid(output), target)
+            loss = torch.nn.functional.binary_cross_entropy(output, target)
 
             # mae and F-measure
             mae_ = (output - target).abs().mean()
