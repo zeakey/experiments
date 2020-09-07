@@ -7,7 +7,7 @@ import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 import numpy as np
 import os, sys, argparse, time, shutil
-from os.path import join, split, isdir, isfile, dirname, abspath
+from os.path import join, split, isdir, isfile, dirname, abspath, split, splitext
 from torch.utils.tensorboard import SummaryWriter
 from PIL import Image
 from vlkit.training import get_logger
@@ -22,7 +22,7 @@ import warnings
 warnings.filterwarnings("ignore", "(Possibly )?corrupt EXIF data", UserWarning)
 from drn_seg import DRNSeg
 from dataset import SODDataset
-from utils import accuracy, init_from_pretrained
+from utils import accuracy, init_from_pretrained, save_maps
 from crf import par_batch_crf_dataloader
 from floss import FLoss, F_cont
 
@@ -139,7 +139,7 @@ train_loader = torch.utils.data.DataLoader(
 
 test_loader = torch.utils.data.DataLoader(
     test_dataset,
-    batch_size=100, shuffle=False, num_workers=args.workers,
+    batch_size=args.batch_size, shuffle=False, num_workers=args.workers,
     pin_memory=True, drop_last=False, sampler=test_sampler)
 
 train_loader_len = len(train_loader)
@@ -217,9 +217,9 @@ def main():
 
     lr_scheduler = CosAnnealingLR(loader_len=len(train_loader), epochs=args.epochs, max_lr=args.lr, min_lr=1e-3, warmup_epochs=args.warmup_epochs)
     for epoch in range(args.epochs):
+        test_mae, test_f, ori_acc = test(model, test_loader, epoch)
         train_loss = train_epoch(model, train_loader, optimizer, lr_scheduler, epoch)
         test_mae, test_f, ori_acc = test(model, test_loader, epoch)
-        
 
         if args.local_rank == 0:
             tfboard_writer.add_scalar("train/F-measure", train_loss, epoch)
@@ -227,7 +227,6 @@ def main():
             tfboard_writer.add_scalar("test/mae", test_mae, epoch)
             tfboard_writer.add_scalar("test/F-measure", test_f, epoch)
             tfboard_writer.add_scalar("test/Orientation-Accuracy", ori_acc, epoch)
-            
 
 
     if args.local_rank == 0:
@@ -338,6 +337,7 @@ def test(model, test_loader, epoch):
     with torch.no_grad():
         end = time.time()
         for i, data in enumerate(test_loader):
+            metas = data["metas"]
             image = data["image"].cuda()
             target = data["label"].cuda().float()
             mask = data["mask"].cuda()
@@ -356,6 +356,12 @@ def test(model, test_loader, epoch):
             mae_ = (seg_pred - target).abs().mean()
             f_ = floss(seg_pred, target)
 
+            filenames = [splitext(split(i)[-1])[0] for i in metas["filename"]]
+            diff = ((seg_pred >= 0.5).float() - target).detach().cpu().numpy()
+            diff = (diff * 128 + 128).astype(np.uint8)
+            save_maps(diff, filenames, join(args.tmp, "epoch-%d"%epoch, "diff"))
+
+
             if args.distributed:
                 reduced_loss = reduce_tensor(loss.data)
                 reduced_mae = reduce_tensor(mae_)
@@ -364,7 +370,6 @@ def test(model, test_loader, epoch):
                 reduced_loss = loss.data
                 reduced_mae = mae_.data
                 reduced_f = f_.data
-            
 
             losses.update(reduced_loss.item(), image.size(0))
             mae.update(reduced_mae.item(), image.size(0))
@@ -385,7 +390,7 @@ def test(model, test_loader, epoch):
         logger.info(' * MAE {mae.avg:.5f} F-measure {fmeasure.avg:.5f} OriAcc={ori_acc.avg:.3f}'\
             .format(mae=mae, fmeasure=fmeasure, ori_acc=ori_acc1))
 
-    return mae.avg, fmeasure.avg, ori_acc1
+    return mae.avg, fmeasure.avg, ori_acc1.avg
 
 def reduce_tensor(tensor):
     rt = tensor.clone()
