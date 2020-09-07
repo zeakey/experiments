@@ -34,8 +34,9 @@ def edge2flux(edge):
     return field, dist.astype(np.float32)
 
 def dist2flux(dist):
-    gx = np.expand_dims(sobel_h(dist), axis=0)
-    gy = np.expand_dims(sobel_v(dist), axis=0)
+    # sobel_h computes the horizontal edges, i.e. the vertical gradient
+    gy = np.expand_dims(sobel_h(dist), axis=0)
+    gx = np.expand_dims(sobel_v(dist), axis=0)
     flux = np.concatenate((gy, gx), axis=0)
 
     # normalize
@@ -139,7 +140,8 @@ class SODDataset(torch.utils.data.Dataset):
 
     def __getitem__(self, index):
         assert isfile(join(self.img_dir, self.__item_names[index]+".jpg"))
-        image = Image.open(join(self.img_dir, self.__item_names[index]+".jpg"))
+        img_fullname = join(self.img_dir, self.__item_names[index]+".jpg")
+        image = Image.open(img_fullname)
 
         label = Image.open(join(self.label_dir, self.__item_names[index]+".png"))
 
@@ -157,21 +159,27 @@ class SODDataset(torch.utils.data.Dataset):
         
         edge = seg2edge(label)
         dist = distance_transform_edt(np.logical_not(edge))
-        angle = flux2angle(dist2flux(dist))
         mask = dist <= 10
+
+        angle = flux2angle(dist2flux(dist))
+        # clamp angle
+        angle[angle>=np.pi*2] = np.pi*2 - 1e-5
         orientation = np.floor(angle / (np.pi*2/8)).astype(np.uint8)
 
         label = np.expand_dims(label, axis=0)
         edge = np.expand_dims(edge, axis=0)
         # orientation = np.expand_dims(orientation, axis=0)
         # mask = np.expand_dims(mask, axis=0)
-
+        metas = dict({
+            "filename": img_fullname
+        })
         result = dict({
             "image": image,
             "label": label,
             "edge": edge,
             "orientation": orientation,
             "mask": mask,
+            "metas": metas
         })
 
         return result
