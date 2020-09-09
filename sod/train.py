@@ -43,7 +43,7 @@ parser.add_argument('-j', '--workers', default=1, type=int, help='number of data
 # optimization
 parser.add_argument('--epochs', default=20, type=int, metavar='N',
                     help='number of total epochs to run')
-parser.add_argument('--warmup-epochs', type=int, default=1, help="warmup epochs")
+parser.add_argument('--warmup-epochs', type=int, default=2, help="warmup epochs")
 parser.add_argument('--milestones', default="10,15", type=str)
 parser.add_argument('--lr', '--learning-rate', default=0.1, type=float,
                     metavar='LR', help='initial learning rate')
@@ -218,9 +218,11 @@ def main():
             if args.local_rank == 0:
                 logger.info("=> no checkpoint found at '{}'".format(args.resume))
 
-    lr_scheduler = CosAnnealingLR(loader_len=len(train_loader), epochs=args.epochs, max_lr=args.lr, min_lr=1e-3, warmup_epochs=args.warmup_epochs)
+    # lr_scheduler = CosAnnealingLR(loader_len=len(train_loader), epochs=args.epochs, max_lr=args.lr, min_lr=0, warmup_epochs=args.warmup_epochs)
+    lr_scheduler = MultiStepLR(loader_len=len(train_loader), base_lr=args.lr, gamma=args.gamma, milestones=[15, 100], warmup_epochs=args.warmup_epochs)
 
     for epoch in range(args.epochs):
+        test_mae, test_f, ori_acc = test(model, test_loader, epoch)
         train_loss, ori_losses = train_epoch(model, train_loader, optimizer, lr_scheduler, epoch)
         test_mae, test_f, ori_acc = test(model, test_loader, epoch)
 
@@ -363,9 +365,12 @@ def test(model, test_loader, epoch):
 
             filenames = [splitext(split(i)[-1])[0] for i in metas["filename"]]
             diff = ((seg_pred >= 0.5).float() - target).detach().cpu().numpy()
-            diff = (diff * 128 + 128).astype(np.uint8)
+            diff = (diff * 127 + 128)
 
-            if (epoch+1) % 100 == 0 or epoch == args.epochs-1:
+            if (epoch+1) % 1 == 0 or epoch == args.epochs-1:
+                seg_pred = (seg_pred >= 0.5).cpu().numpy()*255
+                gt = target.cpu().numpy()*255
+                diff = np.concatenate((seg_pred, gt, diff), axis=3).astype(np.uint8)
                 save_maps(diff, filenames, join(args.tmp, "epoch-%d"%epoch, "diff"))
 
             if args.distributed:
