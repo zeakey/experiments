@@ -4,6 +4,7 @@ import numpy as np
 from scipy.ndimage.morphology import distance_transform_edt
 from os.path import join, isdir, isfile
 from skimage.filters import sobel_h, sobel_v
+import cv2
 
 def seg2edge(seg):
     grad = np.gradient(seg.astype(np.float32))
@@ -34,10 +35,10 @@ def edge2flux(edge):
     return field, dist.astype(np.float32)
 
 def dist2flux(dist):
-    # sobel_h computes the horizontal edges, i.e. the vertical gradient
-    gy = np.expand_dims(sobel_h(dist), axis=0)
-    gx = np.expand_dims(sobel_v(dist), axis=0)
-    flux = np.concatenate((gy, gx), axis=0)
+    sobelx = cv2.Sobel(dist,cv2.CV_64F,1,0,ksize=9)
+    sobely = cv2.Sobel(dist,cv2.CV_64F,0,1,ksize=9)
+
+    flux = np.dstack((sobely, sobelx)).transpose((2,0,1))
 
     # normalize
     norm = np.expand_dims(np.sqrt((flux**2).sum(axis=0)), axis=0)
@@ -145,11 +146,11 @@ class SODDataset(torch.utils.data.Dataset):
 
         label = Image.open(join(self.label_dir, self.__item_names[index]+".png"))
 
-        if self.flip and np.random.rand() > 0.5:
+        flip = self.flip and np.random.rand() > 0.5
+        if flip:
             image = image.transpose(Image.FLIP_LEFT_RIGHT)
             label = label.transpose(Image.FLIP_LEFT_RIGHT)
 
-        
         if self.image_transform:
             image = self.image_transform(image)
         if self.label_transform:
@@ -159,7 +160,8 @@ class SODDataset(torch.utils.data.Dataset):
         
         edge = seg2edge(label)
         dist = distance_transform_edt(np.logical_not(edge))
-        mask = dist <= 10
+        mask = dist <= 15
+        mask[dist <= 1] = False
 
         angle = flux2angle(dist2flux(dist))
         # clamp angle
@@ -171,7 +173,8 @@ class SODDataset(torch.utils.data.Dataset):
         # orientation = np.expand_dims(orientation, axis=0)
         # mask = np.expand_dims(mask, axis=0)
         metas = dict({
-            "filename": img_fullname
+            "filename": img_fullname,
+            "flip": flip
         })
         result = dict({
             "image": image,
