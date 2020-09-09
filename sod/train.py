@@ -34,8 +34,8 @@ parser.add_argument('--print-freq', default=5, type=int,
                     metavar='N', help='print frequency (default: 10)')
 parser.add_argument('--arch', '--a', metavar='STR', default="drn_d_38", help='model')
 # data
-parser.add_argument('--train-data', metavar='DIR', default="data/ecssd", help='path to dataset')
-parser.add_argument('--test-data', metavar='DIR', default="data/ecssd", help='path to dataset')
+parser.add_argument('--train-data', metavar='DIR', default="data/DUTS/DUTS-TR", help='path to dataset')
+parser.add_argument('--test-data', metavar='DIR', default="data/ECSSD", help='path to dataset')
 parser.add_argument('--use-rec', action='store_true', help='Use mxnet record.')
 parser.add_argument('--batch-size', default=20, type=int, metavar='N', help='mini-batch size')
 parser.add_argument('--imsize', default=432, type=int, metavar='N', help='im crop size')
@@ -73,6 +73,9 @@ parser.add_argument('--dynamic-loss-scale', action='store_true',
 parser.add_argument("--local_rank", default=0, type=int)
 parser.add_argument('--sync-bn', action='store_true',
                     help='Use sync BN.')
+
+parser.add_argument("--setting", default=0, type=int)
+
 args = parser.parse_args()
 
 
@@ -162,7 +165,7 @@ def main():
     if args.local_rank == 0:
         logger.info(args)
     # model and optimizer
-    model = DRNSeg(args.arch, classes=1)
+    model = DRNSeg(args.arch, setting=args.setting, classes=1)
 
     if isfile(args.pretrained):
         if args.local_rank == 0:
