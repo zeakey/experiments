@@ -139,12 +139,14 @@ class SODDataset(torch.utils.data.Dataset):
 
         assert isdir(img_dir) and isdir(label_dir)
 
-    def __getitem__(self, index):
-        assert isfile(join(self.img_dir, self.__item_names[index]+".jpg"))
+    def __getitem__(self, index):        
         img_fullname = join(self.img_dir, self.__item_names[index]+".jpg")
+        assert isfile(img_fullname), img_fullname
         image = Image.open(img_fullname)
 
-        label = Image.open(join(self.label_dir, self.__item_names[index]+".png"))
+        lb_fullname = join(self.label_dir, self.__item_names[index]+".png")
+        assert isfile(lb_fullname), lb_fullname
+        label = Image.open(lb_fullname).convert("L")
 
         flip = self.flip and np.random.rand() > 0.5
         if flip:
