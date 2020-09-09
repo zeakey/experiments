@@ -218,8 +218,8 @@ def main():
             if args.local_rank == 0:
                 logger.info("=> no checkpoint found at '{}'".format(args.resume))
 
-    # lr_scheduler = CosAnnealingLR(loader_len=len(train_loader), epochs=args.epochs, max_lr=args.lr, min_lr=0, warmup_epochs=args.warmup_epochs)
-    lr_scheduler = MultiStepLR(loader_len=len(train_loader), base_lr=args.lr, gamma=args.gamma, milestones=[15, 100], warmup_epochs=args.warmup_epochs)
+    lr_scheduler = CosAnnealingLR(loader_len=len(train_loader), epochs=args.epochs, max_lr=args.lr, min_lr=0, warmup_epochs=args.warmup_epochs)
+    # lr_scheduler = MultiStepLR(loader_len=len(train_loader), base_lr=args.lr, gamma=args.gamma, milestones=[15, 100], warmup_epochs=args.warmup_epochs)
 
     for epoch in range(args.epochs):
         train_loss, ori_losses = train_epoch(model, train_loader, optimizer, lr_scheduler, epoch)
