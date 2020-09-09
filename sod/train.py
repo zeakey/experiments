@@ -164,7 +164,7 @@ def main():
     # model and optimizer
     model = DRNSeg(args.arch, classes=1)
 
-    if args.pretrained is not None:
+    if isfile(args.pretrained):
         if args.local_rank == 0:
             model = init_from_pretrained(model, args.pretrained, verbose=True)
         else:
@@ -216,13 +216,14 @@ def main():
                 logger.info("=> no checkpoint found at '{}'".format(args.resume))
 
     lr_scheduler = CosAnnealingLR(loader_len=len(train_loader), epochs=args.epochs, max_lr=args.lr, min_lr=1e-3, warmup_epochs=args.warmup_epochs)
+
     for epoch in range(args.epochs):
-        test_mae, test_f, ori_acc = test(model, test_loader, epoch)
-        train_loss = train_epoch(model, train_loader, optimizer, lr_scheduler, epoch)
+        train_loss, ori_losses = train_epoch(model, train_loader, optimizer, lr_scheduler, epoch)
         test_mae, test_f, ori_acc = test(model, test_loader, epoch)
 
         if args.local_rank == 0:
-            tfboard_writer.add_scalar("train/F-measure", train_loss, epoch)
+            tfboard_writer.add_scalar("train/seg-loss", train_loss, epoch)
+            tfboard_writer.add_scalar("train/ori-loss", ori_losses, epoch)
             tfboard_writer.add_scalar("train/lr", optimizer.param_groups[0]["lr"], epoch)
             tfboard_writer.add_scalar("test/mae", test_mae, epoch)
             tfboard_writer.add_scalar("test/F-measure", test_f, epoch)
@@ -239,8 +240,8 @@ def main():
 def train_epoch(model, train_loader, optimizer, lr_scheduler, epoch):
     batch_time = AverageMeter()
     data_time = AverageMeter()
-    losses = AverageMeter()
-    orientation_losses = AverageMeter()
+    seg_losses = AverageMeter()
+    ori_losses = AverageMeter()
 
     train_loader_len = len(train_loader)
     # switch to train mode
@@ -265,19 +266,20 @@ def train_epoch(model, train_loader, optimizer, lr_scheduler, epoch):
         data_time.update(time.time() - end)
         output = model(image)
 
-        loss = torch.nn.functional.binary_cross_entropy(torch.sigmoid(output[0]), target)
-        orientation_loss = F.cross_entropy(output[1], orientation, reduction="none")
-        orientation_loss = (orientation_loss*mask).sum() / mask.sum()
+        seg_loss = F.binary_cross_entropy(torch.sigmoid(output["seg"]), target)
+        ori_loss = F.cross_entropy(output["orientation"], orientation, reduction="none")
+        ori_loss = (ori_loss * mask).sum() / mask.sum()
+
 
         if args.distributed:
-            reduced_loss = reduce_tensor(loss.data)
-            reduced_orientation_loss = reduce_tensor(orientation_loss.data)
+            reduced_seg_loss = reduce_tensor(seg_loss.data)
+            reduced_ori_loss = reduce_tensor(ori_loss.data)
         else:
-            reduced_loss = loss.data
-            reduced_orientation_loss = orientation_loss.data
+            reduced_seg_loss = seg_loss.data
+            reduced_ori_loss = ori_loss.data
 
-        losses.update(reduced_loss.item(), image.size(0))
-        orientation_losses.update(reduced_orientation_loss.item(), image.size(0))
+        seg_losses.update(reduced_seg_loss.item(), image.size(0))
+        ori_losses.update(reduced_ori_loss.item(), image.size(0))
 
         # compute and adjust lr
         if lr_scheduler is not None:
@@ -286,7 +288,7 @@ def train_epoch(model, train_loader, optimizer, lr_scheduler, epoch):
                 param_group['lr'] = lr
 
         # compute gradient and do SGD step
-        loss = loss + orientation_loss
+        loss = seg_loss + ori_loss
         optimizer.zero_grad()
 
         # scale loss before backward
@@ -310,11 +312,11 @@ def train_epoch(model, train_loader, optimizer, lr_scheduler, epoch):
             logger.info('Epoch[{0}/{1}] It[{2}/{3}]\t'
                   'Batch Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
                   'Data Time {data_time.val:.3f} ({data_time.avg:.3f})\t'
-                  'SegLoss {loss.val:.3f} ({loss.avg:.3f})\t'
-                  'OriLoss {orientation_loss.val:.3f} ({orientation_loss.avg:.3f})\t'
+                  'SegLoss {seg_loss.val:.3f} ({seg_loss.avg:.3f})\t'
+                  'OriLoss {ori_loss.val:.3f} ({ori_loss.avg:.3f})\t'
                   'LR: {lr:.2E}'.format(
                    epoch, args.epochs, i, train_loader_len,
-                   batch_time=batch_time, data_time=data_time, loss=losses, orientation_loss=orientation_losses, lr=lr))
+                   batch_time=batch_time, data_time=data_time, seg_loss=seg_losses, ori_loss=ori_losses, lr=lr))
 
         # if args.local_rank == 0 and i == 0:
         #     data = torchvision.utils.make_grid(image, normalize=True)
@@ -322,11 +324,11 @@ def train_epoch(model, train_loader, optimizer, lr_scheduler, epoch):
         #     # tfboard_writer.add_image("images", data, epoch)
         #     # tfboard_writer.add_image("predictions", pred, epoch)
 
-    return losses.avg
+    return seg_losses.avg, ori_losses.avg
 
 def test(model, test_loader, epoch):
     batch_time = AverageMeter()
-    losses = AverageMeter()
+    seg_losses = AverageMeter()
     mae =  AverageMeter()
     fmeasure = AverageMeter()
     ori_acc1 = AverageMeter()
@@ -345,12 +347,12 @@ def test(model, test_loader, epoch):
 
             # compute output
             output = model(image)
-            seg_pred = torch.sigmoid(output[0])
-            loss = torch.nn.functional.binary_cross_entropy(seg_pred, target)
+            seg_pred = torch.sigmoid(output["seg"])
+            seg_loss = torch.nn.functional.binary_cross_entropy(seg_pred, target)
 
-            ori_pred = output[1].transpose(0,1)[:, mask].t()
+            ori_pred = output["orientation"].transpose(0,1)[:, mask].t()
             ori_gt = orientation[mask]
-            top1, top2 = accuracy(ori_pred, ori_gt, topk=(1,2))
+            ori_top1, ori_top2 = accuracy(ori_pred, ori_gt, topk=(1,2))
 
             # mae and F-measure
             mae_ = (seg_pred - target).abs().mean()
@@ -359,32 +361,33 @@ def test(model, test_loader, epoch):
             filenames = [splitext(split(i)[-1])[0] for i in metas["filename"]]
             diff = ((seg_pred >= 0.5).float() - target).detach().cpu().numpy()
             diff = (diff * 128 + 128).astype(np.uint8)
-            save_maps(diff, filenames, join(args.tmp, "epoch-%d"%epoch, "diff"))
 
+            if (epoch+1) % 100 == 0 or epoch == args.epochs-1:
+                save_maps(diff, filenames, join(args.tmp, "epoch-%d"%epoch, "diff"))
 
             if args.distributed:
-                reduced_loss = reduce_tensor(loss.data)
+                reduced_seg_loss = reduce_tensor(seg_loss.data)
                 reduced_mae = reduce_tensor(mae_)
                 reduced_f = reduce_tensor(f_)
             else:
-                reduced_loss = loss.data
+                reduced_seg_loss = seg_loss.data
                 reduced_mae = mae_.data
                 reduced_f = f_.data
 
-            losses.update(reduced_loss.item(), image.size(0))
+            seg_losses.update(reduced_seg_loss.item(), image.size(0))
             mae.update(reduced_mae.item(), image.size(0))
             fmeasure.update(reduced_f.item(), image.size(0))
-            ori_acc1.update(top1.item(), image.size(0))
+            ori_acc1.update(ori_top1.item(), image.size(0))
             # measure elapsed time
             batch_time.update(time.time() - end)
             end = time.time()
 
             if args.local_rank == 0 and i % args.print_freq == 0:
                 logger.info('Test: [{0}/{1}]\t'
-                      'Test Loss {loss.val:.3f} (avg={loss.avg:.3f})\t'
+                      'SegLoss {seg_loss.val:.3f} (avg={seg_loss.avg:.3f})\t'
                       'MAE {mae.val:.3f} (avg={mae.avg:.3f}) F {fmeasure.val:3f} (avg={fmeasure.avg:.3f})\t'
                       'OriAcc={ori_acc.avg:.3f}\t'.format(
-                       i, test_loader_len, loss=losses, mae=mae, fmeasure=fmeasure, ori_acc=ori_acc1))
+                       i, test_loader_len, seg_loss=seg_losses, mae=mae, fmeasure=fmeasure, ori_acc=ori_acc1))
 
     if args.local_rank == 0:
         logger.info(' * MAE {mae.avg:.5f} F-measure {fmeasure.avg:.5f} OriAcc={ori_acc.avg:.3f}'\
