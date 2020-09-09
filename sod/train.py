@@ -222,7 +222,6 @@ def main():
     lr_scheduler = MultiStepLR(loader_len=len(train_loader), base_lr=args.lr, gamma=args.gamma, milestones=[15, 100], warmup_epochs=args.warmup_epochs)
 
     for epoch in range(args.epochs):
-        test_mae, test_f, ori_acc = test(model, test_loader, epoch)
         train_loss, ori_losses = train_epoch(model, train_loader, optimizer, lr_scheduler, epoch)
         test_mae, test_f, ori_acc = test(model, test_loader, epoch)
 
@@ -367,7 +366,7 @@ def test(model, test_loader, epoch):
             diff = ((seg_pred >= 0.5).float() - target).detach().cpu().numpy()
             diff = (diff * 127 + 128)
 
-            if (epoch+1) % 1 == 0 or epoch == args.epochs-1:
+            if (epoch+1) % 200 == 0 or epoch == args.epochs-1:
                 seg_pred = (seg_pred >= 0.5).cpu().numpy()*255
                 gt = target.cpu().numpy()*255
                 diff = np.concatenate((seg_pred, gt, diff), axis=3).astype(np.uint8)
