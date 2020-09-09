@@ -3,10 +3,11 @@ import torch.nn as nn
 import drn
 import numpy as np
 
+# https://github.com/open-mmlab/mmdetection/blob/master/mmdet/models/dense_heads/guided_anchor_head.py
 from mmcv.ops import DeformConv2d, MaskedConv2d
 from mmcv.cnn import bias_init_with_prob, normal_init
 
-def orientation2vec(orientation, num_classes=8):
+def orientation2flux(orientation, num_classes=8):
     assert orientation.shape[1] == num_classes
     N, _, H, W = orientation.shape
 
@@ -51,12 +52,12 @@ class FeatureAdaption(nn.Module):
     def __init__(self,
                  in_channels,
                  out_channels,
-                 kernel_size=3,
+                 kernel_size=1,
                  deform_groups=4):
         super(FeatureAdaption, self).__init__()
         offset_channels = kernel_size * kernel_size * 2
         self.conv_offset = nn.Conv2d(
-            2, deform_groups * offset_channels, 1, bias=False)
+            256, deform_groups * offset_channels, 1, bias=False)
         self.conv_adaption = DeformConv2d(
             in_channels,
             out_channels,
@@ -75,19 +76,29 @@ class FeatureAdaption(nn.Module):
         return x
 
 class DRNSeg(nn.Module):
-    def __init__(self, model_name, classes, use_torch_up=False):
+    def __init__(self, model_name, classes, setting, use_torch_up=False):
         super(DRNSeg, self).__init__()
-        model = drn.__dict__.get(model_name)(
-            pretrained=False, num_classes=1000)
-        self.base = nn.Sequential(*list(model.children())[:-2],
-            nn.Conv2d(model.out_dim, 256, kernel_size=1, bias=False))
+        model = drn.__dict__.get(model_name)(out_middle=False, pretrained=False, num_classes=1000)
+        # self.base = nn.Sequential(*list(model.children())[:-2],
+        #     nn.Conv2d(model.out_dim, 256, kernel_size=1, bias=False))
+
+        self.setting = setting
+
+        self.base = model
+        self.conv1x1 = nn.Conv2d(model.out_dim, 256, kernel_size=1)
 
         self.feature_adaption = FeatureAdaption(256, 256, kernel_size=3, deform_groups=4)
 
-        self.seg = nn.Conv2d(256, classes, kernel_size=1, bias=False)
+        self.seg_head = nn.Conv2d(256, 1, kernel_size=1, bias=False)
+        self.edge_head = nn.Conv2d(256, 1, kernel_size=1, bias=False)
+        self.ori_head = nn.Conv2d(256, 8, kernel_size=1, bias=False)
 
-        self.orientation = nn.Conv2d(256, 8, kernel_size=1, bias=False)
-
+        self.def_conv = DeformConv2d(
+            256,
+            256,
+            kernel_size=1,
+            padding=0,
+            deform_groups=1)
 
         self.init_params()
         
@@ -109,26 +120,46 @@ class DRNSeg(nn.Module):
             self.up2 = up2
 
     def init_params(self):
-        torch.nn.init.xavier_normal_(self.seg.weight.data)
-        torch.nn.init.normal_(self.orientation.weight.data, mean=0, std=0.01)
-        normal_init(self.base[-1], std=0.1)
+        # normal_init(self.base[-1], std=0.1)
+        normal_init(self.seg_head, std=0.01)
+        normal_init(self.edge_head, std=0.01)
+
+        normal_init(self.ori_head, std=0.01)
+        normal_init(self.def_conv, std=0.01)
+        # self.def_conv.weight.data.copy_(torch.eye(256).unsqueeze_(dim=-1).unsqueeze_(dim=-1))
+        # self.def_conv.weight.requires_grad = False
 
     def forward(self, x):
-        x = self.base(x)
+        x = self.conv1x1(self.base(x))
+        orientation = self.ori_head(x)
 
-        orientation = self.orientation(x)
+        # #
+        flux = orientation2flux(orientation.detach())
+        flux = flux.to(dtype=x.dtype)
 
-        #
-        vec = orientation2vec(orientation.detach())
-        vec = vec.to(dtype=x.dtype)
+        if self.setting == 0:
+            x_adapt = x
+        elif self.setting == 1:
+            x_adapt = self.feature_adaption(x, x.detach())
+        elif self.setting == 2:
+            x_adapt = self.feature_adaption(x, flux.detach())
+        elif self.setting == 3:
+            x_adapt = x + self.feature_adaption(x, flux.detach())
 
-        x = self.feature_adaption(x, vec)
-
-        seg = self.seg(x)
+        seg = self.seg_head(x_adapt)
         seg = self.up1(seg)
+
+        # edge = self.edge_head(x_adapt)
+        # edge = self.up1(edge)
         orientation = self.up2(orientation)
 
-        return seg, orientation
+        results = dict({
+            "seg": seg,
+            # "edge": edge,
+            "orientation": orientation
+        })
+
+        return results
 
 
 if __name__ == '__main__':
