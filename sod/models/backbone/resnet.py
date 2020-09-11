@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from .utils import load_state_dict_from_url
+from torchvision.models.utils import load_state_dict_from_url
 
 
 __all__ = ['ResNet', 'resnet18', 'resnet34', 'resnet50', 'resnet101',
@@ -125,11 +125,12 @@ class ResNet(nn.Module):
 
     def __init__(self, block, layers, num_classes=1000, zero_init_residual=False,
                  groups=1, width_per_group=64, replace_stride_with_dilation=None,
-                 norm_layer=None):
+                 norm_layer=None, return_middle=False):
         super(ResNet, self).__init__()
         if norm_layer is None:
             norm_layer = nn.BatchNorm2d
         self._norm_layer = norm_layer
+        self.return_middle = return_middle
 
         self.inplanes = 64
         self.dilation = 1
@@ -200,21 +201,30 @@ class ResNet(nn.Module):
 
     def _forward_impl(self, x):
         # See note [TorchScript super()]
+
+        auxiliaries = []
+
         x = self.conv1(x)
         x = self.bn1(x)
         x = self.relu(x)
         x = self.maxpool(x)
 
         x = self.layer1(x)
+        auxiliaries.append(x)
+
         x = self.layer2(x)
+        auxiliaries.append(x)
+
         x = self.layer3(x)
+        auxiliaries.append(x)
+
         x = self.layer4(x)
+        auxiliaries.append(x)
 
-        x = self.avgpool(x)
-        x = torch.flatten(x, 1)
-        x = self.fc(x)
-
-        return x
+        if self.return_middle:
+            return x, auxiliaries
+        else:
+            return x
 
     def forward(self, x):
         return self._forward_impl(x)
@@ -351,3 +361,9 @@ def wide_resnet101_2(pretrained=False, progress=True, **kwargs):
     kwargs['width_per_group'] = 64 * 2
     return _resnet('wide_resnet101_2', Bottleneck, [3, 4, 23, 3],
                    pretrained, progress, **kwargs)
+
+if __name__ == '__main__':
+    model = resnet50(replace_stride_with_dilation=[False, True, True])
+
+    x = torch.zeros(1, 3, 432, 432)
+    y = model(x)
