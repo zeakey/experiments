@@ -1,39 +1,13 @@
 import torch, math
 import torch.nn as nn
+import torch.nn.functional as F
 import drn
 import numpy as np
-
 # https://github.com/open-mmlab/mmdetection/blob/master/mmdet/models/dense_heads/guided_anchor_head.py
 from mmcv.ops import DeformConv2d, MaskedConv2d
-from mmcv.cnn import bias_init_with_prob, normal_init
-
-def orientation2flux(orientation, num_classes=8):
-    assert orientation.shape[1] == num_classes
-    N, _, H, W = orientation.shape
-
-    orientation = torch.argmax(orientation, dim=1)
-
-    angle = orientation * 2*np.pi / num_classes
-
-    vec = torch.zeros(N, 2, H, W, device=angle.device, dtype=angle.dtype)
-    cos, sin = angle.sin(), angle.cos()
-    
-    vec[:, 0,] = torch.where(angle<=np.pi, sin, -sin)
-    vec[:, 1,] = cos
-
-    return vec
-
-def fill_up_weights(up):
-    w = up.weight.data
-    f = math.ceil(w.size(2) / 2)
-    c = (2 * f - 1 - f % 2) / (2. * f)
-    for i in range(w.size(2)):
-        for j in range(w.size(3)):
-            w[0, 0, i, j] = \
-                (1 - math.fabs(i / f - c)) * (1 - math.fabs(j / f - c))
-    for c in range(1, w.size(0)):
-        w[c, 0, :, :] = w[0, 0, :, :]
-
+from mmcv.cnn import bias_init_with_prob, normal_init, kaiming_init, ConvModule, build_upsample_layer
+from vlkit.ops import deconv_upsample
+from mmseg.models.decode_heads import ASPPHead
 
 class FeatureAdaption(nn.Module):
     """Feature Adaption Module.
@@ -52,12 +26,13 @@ class FeatureAdaption(nn.Module):
     def __init__(self,
                  in_channels,
                  out_channels,
+                 offset_in_channels,
                  kernel_size=1,
                  deform_groups=4):
         super(FeatureAdaption, self).__init__()
         offset_channels = kernel_size * kernel_size * 2
         self.conv_offset = nn.Conv2d(
-            256, deform_groups * offset_channels, 1, bias=False)
+            offset_in_channels, deform_groups * offset_channels, 1, bias=False)
         self.conv_adaption = DeformConv2d(
             in_channels,
             out_channels,
@@ -76,20 +51,14 @@ class FeatureAdaption(nn.Module):
         return x
 
 class DRNSeg(nn.Module):
-    def __init__(self, model_name, classes, setting, use_torch_up=False):
+    def __init__(self, model_name, classes, setting=0, use_torch_up=False):
         super(DRNSeg, self).__init__()
-        model = drn.__dict__.get(model_name)(out_middle=False, pretrained=False, num_classes=1000)
-        # self.base = nn.Sequential(*list(model.children())[:-2],
-        #     nn.Conv2d(model.out_dim, 256, kernel_size=1, bias=False))
-
-        self.setting = setting
-
+        model = drn.__dict__.get(model_name)(pretrained=False)
         self.base = model
-        self.conv1x1 = nn.Conv2d(model.out_dim, 256, kernel_size=1)
-
-        self.feature_adaption = FeatureAdaption(256, 256, kernel_size=3, deform_groups=4)
-
+        self.conv1x1 = nn.Conv2d(512, 256, kernel_size=1, bias=False)
+        # self.seg_head = ASPPHead(in_channels=256, channels=128, num_classes=1, dilations=[1,2,4,8])
         self.seg_head = nn.Conv2d(256, 1, kernel_size=1, bias=False)
+
         self.edge_head = nn.Conv2d(256, 1, kernel_size=1, bias=False)
         self.ori_head = nn.Conv2d(256, 8, kernel_size=1, bias=False)
 
@@ -100,62 +69,33 @@ class DRNSeg(nn.Module):
             padding=0,
             deform_groups=1)
 
-        self.init_params()
-        
+        self.up_seg = deconv_upsample(channels=1, stride=8)
+        self.up_ori = deconv_upsample(channels=8, stride=8)
 
-        if use_torch_up:
-            self.up = nn.UpsamplingBilinear2d(scale_factor=8)
-        else:
-            up2 = nn.ConvTranspose2d(8, 8, 16, stride=8, padding=4,
-                                    output_padding=0, groups=8,
-                                    bias=False)
-            up1 = nn.ConvTranspose2d(1, 1, 16, stride=8, padding=4,
-                                    output_padding=0, groups=1,
-                                    bias=False)
-            fill_up_weights(up1)
-            fill_up_weights(up2)
-            up1.weight.requires_grad = False
-            up2.weight.requires_grad = False
-            self.up1 = up1
-            self.up2 = up2
+        self.init_params()
 
     def init_params(self):
-        # normal_init(self.base[-1], std=0.1)
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                kaiming_init(m)
+        # normal_init(self.seg_head.conv_seg, std=0.01)
         normal_init(self.seg_head, std=0.01)
         normal_init(self.edge_head, std=0.01)
-
         normal_init(self.ori_head, std=0.01)
-        normal_init(self.def_conv, std=0.01)
-        # self.def_conv.weight.data.copy_(torch.eye(256).unsqueeze_(dim=-1).unsqueeze_(dim=-1))
-        # self.def_conv.weight.requires_grad = False
 
     def forward(self, x):
         x = self.conv1x1(self.base(x))
+        seg = self.seg_head(x)
+        edge = self.edge_head(x)
         orientation = self.ori_head(x)
 
-        # #
-        flux = orientation2flux(orientation.detach())
-        flux = flux.to(dtype=x.dtype)
-
-        if self.setting == 0:
-            x_adapt = x
-        elif self.setting == 1:
-            x_adapt = self.feature_adaption(x, x.detach())
-        elif self.setting == 2:
-            x_adapt = self.feature_adaption(x, flux.detach())
-        elif self.setting == 3:
-            x_adapt = x + self.feature_adaption(x, flux.detach())
-
-        seg = self.seg_head(x_adapt)
-        seg = self.up1(seg)
-
-        # edge = self.edge_head(x_adapt)
-        # edge = self.up1(edge)
-        orientation = self.up2(orientation)
+        seg = self.up_seg(seg)
+        edge = self.up_seg(edge)
+        orientation = self.up_ori(orientation)
 
         results = dict({
             "seg": seg,
-            # "edge": edge,
+            "edge": edge,
             "orientation": orientation
         })
 
