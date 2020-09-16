@@ -5,12 +5,7 @@ from scipy.ndimage.morphology import distance_transform_edt
 from os.path import join, isdir, isfile
 from skimage.filters import sobel_h, sobel_v
 import cv2
-
-def seg2edge(seg):
-    grad = np.gradient(seg.astype(np.float32))
-    grad = np.sqrt(grad[0]**2 + grad[1]**2)
-
-    return grad != 0
+from vlkit.dense import seg2edge, dense2flux, flux2angle, quantize_angle, dequantize_angle
 
 def edge2flux(edge):
     H, W = edge.shape
@@ -34,95 +29,6 @@ def edge2flux(edge):
 
     return field, dist.astype(np.float32)
 
-def dist2flux(dist):
-    sobelx = cv2.Sobel(dist,cv2.CV_64F,1,0,ksize=9)
-    sobely = cv2.Sobel(dist,cv2.CV_64F,0,1,ksize=9)
-
-    flux = np.dstack((sobely, sobelx)).transpose((2,0,1))
-
-    # normalize
-    norm = np.expand_dims(np.sqrt((flux**2).sum(axis=0)), axis=0)
-    norm[norm==0] = 1
-    flux /= norm
-
-    return flux
-
-def flux2angle(flux):
-    """
-    flux: a [2, H, W] tesnro represents the flux vector of each position
-    """
-    _, H, W = flux.shape
-    top_half = flux[0,...] >= 0 # y >= 0, \theta <= \pi
-    bottom_half = flux[0,...] < 0 # y < 0, \theta > \pi
-    
-    unit = np.zeros((2, H, W), dtype=np.float32)
-    unit[1,...] = 1 # unit vector: (y=0, x=1)
-    cos = (flux * unit).sum(axis=0)
-    acos = np.arccos(cos)
-    angle = np.zeros((H, W), dtype=np.float32)
-    angle[top_half] = acos[top_half]
-    angle[bottom_half] = 2*np.pi - acos[bottom_half]
-
-    return angle
-
-class SODDatasetDual(torch.utils.data.Dataset):
-    def __init__(self, img_dir, label_dirs, name_list, flip=False, image_transform=None, label_transform=None):
-        assert isdir(img_dir), "%s doesn't exist" % img_dir
-        for label_dir in label_dirs:
-            assert isdir(label_dir), "%s doesn't exist" % label_dir
-        assert isfile(name_list)
-
-        self.img_dir = img_dir
-        self.label_dirs = label_dirs
-        self.flip = flip
-        self.image_transform = image_transform
-        self.label_transform = label_transform
-        self.__item_names = [line.strip() for line in open(name_list, 'r')]
-
-    def __getitem__(self, index):
-        assert isfile(join(self.img_dir, self.__item_names[index]+".jpg"))
-        img = Image.open(join(self.img_dir, self.__item_names[index]+".jpg"))
-
-        labels = []
-        for label_dir in self.label_dirs:
-            assert isfile(join(label_dir, self.__item_names[index]+".png"))
-            labels.append(Image.open(join(label_dir, self.__item_names[index]+".png")))
-
-        if self.flip and np.random.rand() > 0.5:
-            img = img.transpose(Image.FLIP_LEFT_RIGHT)
-            labels = [label.transpose(Image.FLIP_LEFT_RIGHT) for label in labels]
-
-        if self.image_transform:
-            img = self.image_transform(img)
-        if self.label_transform:
-            labels = [self.label_transform(l) for l in labels]
-
-        return tuple([img]+labels+[index])
-
-        # data = [Image.open(join(self.data_dir, self.image_list[index]))]
-        # if self.GTlabel_list is not None:
-        #     data.append(Image.open(join(self.data_dir, self.GTlabel_list[index])))
-
-        # pseudo_labels=[]
-        # if self.pseudolabel_list is not None:
-        #     for single_label_list in self.pseudolabel_list:
-        #         pseudo_labels.append(Image.open(join(self.data_dir, single_label_list[index])))
-        # data.append(pseudo_labels)
-
-        # data = list(self.transforms(*data))
-
-        # if self.out_name:
-        #     data.append(self.image_list[index])
-        # assert len(data)==4
-
-        # return tuple(data)
-
-    def __len__(self):
-        return len(self.__item_names)
-
-    def get_item_names(self):
-        return self.__item_names.copy()
-
 
 class SODDataset(torch.utils.data.Dataset):
     def __init__(self, img_dir, label_dir, name_list, flip=True, image_transform=None, label_transform=None):
@@ -142,7 +48,7 @@ class SODDataset(torch.utils.data.Dataset):
     def __getitem__(self, index):        
         img_fullname = join(self.img_dir, self.__item_names[index]+".jpg")
         assert isfile(img_fullname), img_fullname
-        image = Image.open(img_fullname)
+        image = Image.open(img_fullname).convert("RGB")
 
         lb_fullname = join(self.label_dir, self.__item_names[index]+".png")
         assert isfile(lb_fullname), lb_fullname
@@ -165,10 +71,8 @@ class SODDataset(torch.utils.data.Dataset):
         mask = dist <= 15
         mask[dist <= 1] = False
 
-        angle = flux2angle(dist2flux(dist))
-        # clamp angle
-        angle[angle>=np.pi*2] = np.pi*2 - 1e-5
-        orientation = np.floor(angle / (np.pi*2/8)).astype(np.uint8)
+        angle = flux2angle(dense2flux(dist))
+        orientation = quantize_angle(angle, num_bins=8)
 
         label = np.expand_dims(label, axis=0)
         edge = np.expand_dims(edge, axis=0)
