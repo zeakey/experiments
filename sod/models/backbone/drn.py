@@ -6,10 +6,6 @@ import torch.utils.model_zoo as model_zoo
 
 BatchNorm = nn.BatchNorm2d
 
-
-# __all__ = ['DRN', 'drn26', 'drn42', 'drn58']
-
-
 webroot = 'http://dl.yf.io/drn/'
 
 model_urls = {

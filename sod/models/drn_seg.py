@@ -1,7 +1,7 @@
 import torch, math
 import torch.nn as nn
 import torch.nn.functional as F
-import drn
+from .backbone import drn
 import numpy as np
 # https://github.com/open-mmlab/mmdetection/blob/master/mmdet/models/dense_heads/guided_anchor_head.py
 from mmcv.ops import DeformConv2d, MaskedConv2d
