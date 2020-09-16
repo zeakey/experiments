@@ -1,0 +1,10 @@
+* This is an example code for the algorithm described in
+
+Wei Shen, Xiang Bai, Xingwei Yang, Longin Jan Latecki. 
+Skeleton pruning as trade-off between skeleton simplicity and reconstruction error. 
+SCIENCE CHINA Information Sciences, 56(4): 1-14, 2013.
+
+* To run the example code:
+Start from test.m
+
+For any problems with the code, please contact me @ wei.shen@shu.edu.cn, shenwei1231@gmail.com
