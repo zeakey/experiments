@@ -5,9 +5,9 @@ import math
 import torch.utils.model_zoo as model_zoo
 
 BatchNorm = nn.BatchNorm2d
+PADDING_MODE = "circular"
 
 webroot = 'http://dl.yf.io/drn/'
-
 model_urls = {
     'resnet50': 'https://download.pytorch.org/models/resnet50-19c8e357.pth',
     'drn-c-26': webroot + 'drn_c_26-ddedf421.pth',
@@ -22,7 +22,7 @@ model_urls = {
 
 def conv3x3(in_planes, out_planes, stride=1, padding=1, dilation=1):
     return nn.Conv2d(in_planes, out_planes, kernel_size=3, stride=stride,
-                     padding=padding, bias=False, dilation=dilation)
+                     padding=padding, bias=False, dilation=dilation, padding_mode=PADDING_MODE)
 
 
 class BasicBlock(nn.Module):
@@ -71,7 +71,7 @@ class Bottleneck(nn.Module):
         self.bn1 = BatchNorm(planes)
         self.conv2 = nn.Conv2d(planes, planes, kernel_size=3, stride=stride,
                                padding=dilation[1], bias=False,
-                               dilation=dilation[1])
+                               dilation=dilation[1], padding_mode=PADDING_MODE)
         self.bn2 = BatchNorm(planes)
         self.conv3 = nn.Conv2d(planes, planes * 4, kernel_size=1, bias=False)
         self.bn3 = BatchNorm(planes * 4)
@@ -116,7 +116,7 @@ class DRN(nn.Module):
 
         
         self.layer0 = nn.Sequential(
-            nn.Conv2d(3, channels[0], kernel_size=7, stride=1, padding=3,
+            nn.Conv2d(3, channels[0], kernel_size=7, stride=1, padding=3, padding_mode=PADDING_MODE,
                         bias=False),
             BatchNorm(channels[0]),
             nn.ReLU(inplace=True)
@@ -178,7 +178,7 @@ class DRN(nn.Module):
             modules.extend([
                 nn.Conv2d(self.inplanes, channels, kernel_size=3,
                           stride=stride if i == 0 else 1,
-                          padding=dilation, bias=False, dilation=dilation),
+                          padding=dilation, padding_mode=PADDING_MODE, bias=False, dilation=dilation),
                 BatchNorm(channels),
                 nn.ReLU(inplace=True)])
             self.inplanes = channels
