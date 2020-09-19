@@ -23,7 +23,7 @@ warnings.filterwarnings("ignore", "(Possibly )?corrupt EXIF data", UserWarning)
 from models.drn_seg import DRNSeg
 from models.poolnet import poolnet
 from dataset import SODDataset
-from utils import accuracy, init_from_pretrained, save_maps
+from utils import accuracy, save_maps
 from crf import par_batch_crf_dataloader
 from floss import FLoss, F_cont
 
@@ -56,7 +56,7 @@ parser.add_argument('--weight-decay', '--wd', default=5e-4, type=float,
 parser.add_argument('--resume', default="", type=str, metavar='PATH',
                     help='path to latest checkpoint')
 parser.add_argument('--tmp', help='tmp folder', default="tmp/poolnet")
-parser.add_argument('--pretrained', help='pretrained model', type=str, default=None)
+parser.add_argument('--pretrained', help='pretrained model', type=str, default="resnet50_caffe.pth")
 # FP16
 parser.add_argument('--fp16', action='store_true',
                     help='half precision training.')
@@ -149,13 +149,13 @@ def main():
         logger.info(args)
 
     model = poolnet.build_model("resnet")
-    model.base.resnet.load_state_dict(torch.load("resnet50_caffe.pth"))
+    
+    
 
     if args.pretrained is not None and isfile(args.pretrained):
+        model.base.resnet.load_state_dict(torch.load("resnet50_caffe.pth"))
         if args.local_rank == 0:
-            model = init_from_pretrained(model, args.pretrained, verbose=True)
-        else:
-            model = init_from_pretrained(model, args.pretrained, verbose=False)
+            logger.info("Loading weights from %s"%args.pretrained)
 
     if args.sync_bn:
         if args.local_rank == 0:
