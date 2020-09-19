@@ -144,28 +144,12 @@ test_loader = torch.utils.data.DataLoader(
 
 train_loader_len = len(train_loader)
 
-
-def l2loss(x, y, mask=None):
-    assert x.shape == y.shape
-
-    loss = (x - y)**2
-    loss = loss.sum(dim=1).sqrt().unsqueeze(dim=1)
-    if mask is not None:
-        loss = (loss * mask).sum() / mask.sum()
-    else:
-        loss = loss.mean()
-    return loss
-
 def main():
     if args.local_rank == 0:
         logger.info(args)
-    # model and optimizer
-    # model = DRNSeg("drn_d_54", setting=args.setting, classes=1)
-    # model = Model()
 
-    # poolnet
     model = poolnet.build_model("resnet")
-    # model.base.resnet.load_state_dict(torch.load("resnet50_caffe.pth"))
+    model.base.resnet.load_state_dict(torch.load("resnet50_caffe.pth"))
 
     if args.pretrained is not None and isfile(args.pretrained):
         if args.local_rank == 0:
