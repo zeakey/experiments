@@ -242,7 +242,7 @@ def main():
 
     for epoch in range(args.epochs):
         train_loss, ori_losses = train_epoch(model, train_loader, optimizer, lr_scheduler, epoch)
-        test_mae, ori_acc = test(model, test_loader, epoch)
+        test_mae = test(model, test_loader, epoch)
 
         # adjust lr
         if epoch in args.milestones:
@@ -255,7 +255,6 @@ def main():
             tfboard_writer.add_scalar("train/ori-loss", ori_losses, epoch)
             tfboard_writer.add_scalar("train/lr", optimizer.param_groups[0]["lr"], epoch)
             tfboard_writer.add_scalar("test/mae", test_mae, epoch)
-            tfboard_writer.add_scalar("test/Orientation-Accuracy", ori_acc, epoch)
 
     if args.local_rank == 0:
         logger.info("Optimization done, ALL results saved to %s." % args.tmp)
@@ -342,7 +341,6 @@ def test(model, test_loader, epoch):
     batch_time = AverageMeter()
     seg_losses = AverageMeter()
     mae =  AverageMeter()
-    ori_acc1 = AverageMeter()
     # switch to evaluate mode
     model.eval()
     test_loader_len = len(test_loader)
@@ -376,7 +374,7 @@ def test(model, test_loader, epoch):
 
             seg_losses.update(reduced_seg_loss.item(), image.size(0))
             mae.update(reduced_mae.item(), image.size(0))
-            ori_acc1.update(ori_top1.item(), image.size(0))
+
             # measure elapsed time
             batch_time.update(time.time() - end)
             end = time.time()
@@ -388,10 +386,9 @@ def test(model, test_loader, epoch):
                        i, test_loader_len, seg_loss=seg_losses, mae=mae))
 
     if args.local_rank == 0:
-        logger.info(' * MAE {mae.avg:.5f} OriAcc={ori_acc.avg:.3f}'\
-            .format(mae=mae, ori_acc=ori_acc1))
+        logger.info(' * MAE {mae.avg:.5f}'.format(mae=mae))
 
-    return mae.avg, ori_acc1.avg
+    return mae.avg
 
 def reduce_tensor(tensor):
     rt = tensor.clone()
