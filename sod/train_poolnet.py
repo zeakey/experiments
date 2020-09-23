@@ -22,15 +22,20 @@ import warnings
 warnings.filterwarnings("ignore", "(Possibly )?corrupt EXIF data", UserWarning)
 from models.drn_seg import DRNSeg
 from models.poolnet import poolnet
-from dataset import SODDataset
 from utils import accuracy, save_maps
 from crf import par_batch_crf_dataloader
-from floss import FLoss, F_cont
+import cv2
+
+sys.path.insert(0, "/home/kai/Code0/others/PoolNet/dataset/")
+from dataset import ImageDataTrain, ImageDataTest
+
+
+torch.manual_seed(0)
 
 parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                     help='manual epoch number (useful on restarts)')
-parser.add_argument('--print-freq', default=5, type=int,
+parser.add_argument('--print-freq', default=100, type=int,
                     metavar='N', help='print frequency (default: 10)')
 parser.add_argument('--arch', '--a', metavar='STR', default="drn_d_54", help='model')
 # data
@@ -45,11 +50,12 @@ parser.add_argument('--epochs', default=24, type=int, metavar='N',
                     help='number of total epochs to run')
 parser.add_argument('--warmup-epochs', type=int, default=2, help="warmup epochs")
 parser.add_argument('--milestones', default="15,1000000", type=str)
-parser.add_argument('--lr', '--learning-rate', default=1e-5, type=float,
+parser.add_argument('--lr', '--learning-rate', default=5e-5, type=float,
                     metavar='LR', help='initial learning rate')
 parser.add_argument('--lr-scheduler', default="cos", type=str, help='LR scheduler')
 parser.add_argument('--gamma', default=0.1, type=float,
                     metavar='GM', help='decrease learning rate by gamma')
+parser.add_argument('--iter-size', default=10, type=int, help='iter size')
 parser.add_argument('--momentum', default=0.9, type=float, metavar='M', help='momentum')
 parser.add_argument('--weight-decay', '--wd', default=5e-4, type=float,
                     metavar='W', help='weight decay')
@@ -106,23 +112,64 @@ if args.fp16:
     assert args.distributed, "FP16 can be only used in Distributed mode"
     assert torch.backends.cudnn.enabled, "fp16 mode requires cudnn backend to be enabled."
 
+class SODDataset(torch.utils.data.Dataset):
+    def __init__(self, img_dir, label_dir, name_list, flip=True, image_transform=None, label_transform=None):
+        assert isdir(img_dir), "%s doesn't exist" % img_dir
+        assert isdir(label_dir), "%s doesn't exist" % label_dir
+        assert isfile(name_list)
 
-CELoss = nn.CrossEntropyLoss()
+        self.img_dir = img_dir
+        self.label_dir = label_dir
+        self.flip = flip
+        self.__item_names = [line.strip() for line in open(name_list, 'r')]
 
+        assert isdir(img_dir) and isdir(label_dir)
 
-normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                        std=[0.229, 0.224, 0.225])
-# image_transform = transforms.Compose([transforms.Resize(args.imsize), transforms.ToTensor(), normalize])
-image_transform = None # transforms.Compose([transforms.ToTensor()])
-label_transform = None # transforms.Compose([transforms.ToTensor()])
-train_dataset = SODDataset(img_dir=join(args.train_data, "images"),
-                label_dir=join(args.train_data, "gt-masks"),
-                name_list=join(args.train_data, "train_names.txt"),
-                flip=True, image_transform=image_transform, label_transform=label_transform)
+    def __getitem__(self, index):        
+        img_fullname = join(self.img_dir, self.__item_names[index]+".jpg")
+        lb_fullname = join(self.label_dir, self.__item_names[index]+".png")
+        assert isfile(img_fullname), img_fullname
+        assert isfile(lb_fullname), lb_fullname
+        image = np.array(cv2.imread(img_fullname), dtype=np.float32)
+        label = np.array(Image.open(lb_fullname).convert("L"), dtype=np.float32) / 255
+
+        if image.shape[:-1] != label.shape:
+            H, W = label.shape
+            image = cv2.resize(image, (W, H))
+
+        flip = self.flip and np.random.rand() > 0.5
+        if self.flip and flip:
+            image = image[:, ::-1, :].copy()
+            label = label[:, ::-1].copy()
+
+        image -= np.array((104.00699, 116.66877, 122.67892))
+        image = image.transpose((2,0,1))
+
+        label = np.expand_dims(label, axis=0)
+        metas = dict({
+            "filename": img_fullname,
+            "flip": flip
+        })
+        result = dict({
+            "image": image,
+            "label": label,
+            "metas": metas
+        })
+
+        return result
+
+    def __len__(self):
+        return len(self.__item_names)
+
+    def get_item_names(self):
+        return self.__item_names.copy()
+
+train_dataset = SODDataset(img_dir=join(args.train_data, "images/"),
+                label_dir=join(args.train_data, "gt-masks/"),
+                name_list=join(args.train_data, "train_names.txt"), flip=True)
 test_dataset = SODDataset(img_dir=join(args.test_data, "images/"),
                 label_dir=join(args.test_data, "gt-masks/"),
-                name_list=join(args.test_data, "test_names.txt"),
-                flip=False, image_transform=image_transform, label_transform=label_transform)
+                name_list=join(args.test_data, "test_names.txt"), flip=False)
 
 if args.distributed:
         train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
@@ -132,15 +179,8 @@ else:
     val_sampler = None
     test_sampler = None
 
-train_loader = torch.utils.data.DataLoader(
-    train_dataset,
-    batch_size=args.batch_size, shuffle=(train_sampler is None), num_workers=args.workers,
-    pin_memory=True, sampler=train_sampler)
-
-test_loader = torch.utils.data.DataLoader(
-    test_dataset,
-    batch_size=args.batch_size, shuffle=False, num_workers=args.workers,
-    pin_memory=True, drop_last=False, sampler=test_sampler)
+train_loader = torch.utils.data.DataLoader(train_dataset, args.batch_size, shuffle=True, num_workers=1, pin_memory=True)
+test_loader = torch.utils.data.DataLoader(test_dataset, args.batch_size, shuffle=False, num_workers=args.workers, pin_memory=True, drop_last=False)
 
 train_loader_len = len(train_loader)
 
@@ -149,8 +189,7 @@ def main():
         logger.info(args)
 
     model = poolnet.build_model("resnet")
-    
-    
+    model.apply(poolnet.weights_init)
 
     if args.pretrained is not None and isfile(args.pretrained):
         model.base.resnet.load_state_dict(torch.load("resnet50_caffe.pth"))
@@ -235,63 +274,35 @@ def train_epoch(model, train_loader, optimizer, lr_scheduler, epoch):
     # switch to train mode
     model.eval()
 
+    iter_counter = 0
     end = time.time()
     for i, data in enumerate(train_loader):
 
-        image = data["image"]
-        target = data["label"]
-        edge = data["edge"]
-        orientation = data["orientation"]
-        mask = data["mask"]
-
-        image = torch.flip(image, dims=(1,)) # RGB to BGR
-        image -= torch.tensor([104.00699, 116.66877, 122.67892]).reshape(1,3,1,1)
+        image = data["image"].cuda(non_blocking=True)
+        target = data["label"].cuda(non_blocking=True).float()
+        if image.shape[2:] != target.shape[2:]:
+            logger.info('IMAGE ERROR, PASSING```')
+            continue
 
         if args.distributed:
             image = image.cuda(non_blocking=True).to(dtype=DTYPE)
 
-        image = image.cuda()#(non_blocking=True)
-        target = target.cuda().float()#(non_blocking=True).float()
-        # edge = edge.cuda(non_blocking=True).float()
-        # orientation = orientation.cuda(non_blocking=True).long()
-        # mask = mask.cuda(non_blocking=True)
-
         # measure data loading time
         data_time.update(time.time() - end)
         output = model(image)
-
         # seg_loss = F.binary_cross_entropy(torch.sigmoid(output["seg"]), target)
         seg_loss = F.binary_cross_entropy_with_logits(output, target, reduction='sum')
-
-        # ori_loss = F.cross_entropy(output["orientation"], orientation, reduction="none")
-        # ori_loss = (ori_loss * mask).sum() / mask.sum()
-        ori_loss = torch.zeros_like(seg_loss)
-
-        # edge_loss = F.binary_cross_entropy(torch.sigmoid(output["edge"]), edge, reduction="none")
-        # mask = torch.where(edge==0, edge.mean(), 1-edge.mean())
-        # mask /= max(mask.mean(), 1e-5)
-        # edge_loss = (edge_loss * mask).mean()
-        ori_loss = torch.zeros_like(seg_loss)
+        seg_loss /= (args.iter_size * args.batch_size)
 
         if args.distributed:
             reduced_seg_loss = reduce_tensor(seg_loss.data)
-            reduced_ori_loss = reduce_tensor(ori_loss.data)
         else:
             reduced_seg_loss = seg_loss.data
-            reduced_ori_loss = ori_loss.data
 
         seg_losses.update(reduced_seg_loss.item(), image.size(0))
-        ori_losses.update(reduced_ori_loss.item(), image.size(0))
-
-        # compute and adjust lr
-        if lr_scheduler is not None:
-            lr = lr_scheduler.step()
-            for param_group in optimizer.param_groups:
-                param_group['lr'] = lr
 
         # compute gradient and do SGD step
-        loss = seg_loss# + ori_loss
-        optimizer.zero_grad()
+        loss = seg_loss # + ori_loss
 
         # scale loss before backward
         if args.fp16:
@@ -299,8 +310,12 @@ def train_epoch(model, train_loader, optimizer, lr_scheduler, epoch):
                 scaled_loss.backward()
         else:
             loss.backward()
+        iter_counter += 1
 
-        optimizer.step()
+        if iter_counter % args.iter_size == 0:
+            optimizer.step()
+            optimizer.zero_grad()
+            iter_counter = 0
 
         if args.distributed:
             torch.cuda.synchronize()
@@ -315,18 +330,11 @@ def train_epoch(model, train_loader, optimizer, lr_scheduler, epoch):
                   'Batch Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
                   'Data Time {data_time.val:.3f} ({data_time.avg:.3f})\t'
                   'SegLoss {seg_loss.val:.3f} ({seg_loss.avg:.3f})\t'
-                  'OriLoss {ori_loss.val:.3f} ({ori_loss.avg:.3f})\t'
                   'LR: {lr:.2E}'.format(
                    epoch, args.epochs, i, train_loader_len,
-                   batch_time=batch_time, data_time=data_time, seg_loss=seg_losses, ori_loss=ori_losses, lr=lr))
+                   batch_time=batch_time, data_time=data_time, seg_loss=seg_losses, lr=lr))
 
             tfboard_writer.add_scalar("train/iter-segloss", seg_losses.val, epoch*len(train_loader)+i)
-
-        # if args.local_rank == 0 and i == 0:
-        #     data = torchvision.utils.make_grid(image, normalize=True)
-        #     pred = torchvision.utils.make_grid(torch.sigmoid(output), normalize=True)
-        #     # tfboard_writer.add_image("images", data, epoch)
-        #     # tfboard_writer.add_image("predictions", pred, epoch)
 
     return seg_losses.avg, ori_losses.avg
 
@@ -345,33 +353,19 @@ def test(model, test_loader, epoch):
             metas = data["metas"]
             image = data["image"].cuda()
             target = data["label"].cuda().float()
-            mask = data["mask"].cuda()
-            orientation = data["orientation"].cuda().long()
 
             # compute output
             output = model(image)
+            seg_loss = torch.nn.functional.binary_cross_entropy_with_logits(output, target)
             seg_pred = torch.sigmoid(output)
-            seg_loss = torch.nn.functional.binary_cross_entropy(seg_pred, target)
-
-            # ori_pred = output["orientation"].transpose(0,1)[:, mask].t()
-            # ori_gt = orientation[mask]
-            # ori_top1, ori_top2 = accuracy(ori_pred, ori_gt, topk=(1,2))
-            ori_top1 = torch.zeros_like(seg_loss)
-
             # mae and F-measure
             mae_ = (seg_pred - target).abs().mean()
 
             filenames = [splitext(split(i)[-1])[0] for i in metas["filename"]]
-            diff = ((seg_pred >= 0.5).float() - target).detach().cpu().numpy()
-            diff = (diff * 127 + 128)
 
             if (epoch+1) % 5 == 0 or epoch == args.epochs-1:
                 seg_pred = (seg_pred.cpu().numpy()*255).astype(np.uint8)
                 save_maps(seg_pred, filenames, join(args.tmp, "epoch-%d"%epoch, "prediction"))
-                # seg_pred = (seg_pred >= 0.5).cpu().numpy()*255
-                # gt = target.cpu().numpy()*255
-                # diff = np.concatenate((seg_pred, gt, diff), axis=3).astype(np.uint8)
-                # save_maps(diff, filenames, join(args.tmp, "epoch-%d"%epoch, "diff"))
 
             if args.distributed:
                 reduced_seg_loss = reduce_tensor(seg_loss.data)
@@ -390,9 +384,8 @@ def test(model, test_loader, epoch):
             if args.local_rank == 0 and i % args.print_freq == 0:
                 logger.info('Test: [{0}/{1}]\t'
                       'SegLoss {seg_loss.val:.3f} (avg={seg_loss.avg:.3f})\t'
-                      'MAE {mae.val:.3f} (avg={mae.avg:.3f})\t'
-                      'OriAcc={ori_acc.avg:.3f}\t'.format(
-                       i, test_loader_len, seg_loss=seg_losses, mae=mae, ori_acc=ori_acc1))
+                      'MAE {mae.val:.3f} (avg={mae.avg:.3f})\t'.format(
+                       i, test_loader_len, seg_loss=seg_losses, mae=mae))
 
     if args.local_rank == 0:
         logger.info(' * MAE {mae.avg:.5f} OriAcc={ori_acc.avg:.3f}'\
