@@ -108,7 +108,10 @@ class SODDataset(torch.utils.data.Dataset):
     def get_item_names(self):
         return self.__item_names.copy()
 
-class PoolNetDataset(torch.utils.data.Dataset):
+# Caffe style data loading code
+# image encode/decode with cv2
+# images are not normalized (/255)
+class CaffeDataset(torch.utils.data.Dataset):
     def __init__(self, img_dir, label_dir, name_list, flip=True, imsize=[0,0]):
         assert isdir(img_dir), "%s doesn't exist" % img_dir
         assert isdir(label_dir), "%s doesn't exist" % label_dir
