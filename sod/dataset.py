@@ -5,8 +5,8 @@ from scipy.ndimage.morphology import distance_transform_edt
 from os.path import join, isdir, isfile
 from skimage.filters import sobel_h, sobel_v
 import cv2
-import random
 from vlkit.dense import seg2edge, dense2flux, flux2angle, quantize_angle, dequantize_angle
+from vlkit.io import imread
 
 def edge2flux(edge):
     H, W = edge.shape
@@ -51,19 +51,22 @@ class SODDataset(torch.utils.data.Dataset):
     def __getitem__(self, index):        
         img_fullname = join(self.img_dir, self.__item_names[index]+".jpg")
         assert isfile(img_fullname), img_fullname
-        image = Image.open(img_fullname).convert("RGB")
+        image = imread(img_fullname, backend="pil")
 
         lb_fullname = join(self.label_dir, self.__item_names[index]+".png")
         assert isfile(lb_fullname), lb_fullname
-        label = Image.open(lb_fullname).convert("L")
+        label = imread(lb_fullname, backend="pil", grayscale=True)
 
-        if image.size != label.size:
-            label = label.resize((image.width, image.height))
+        if image.shape[:2] != label.shape:
+            print("image and label shape mismatch, reshape.")
+            H, W = image.shape[:2]
+            label = cv2.resize(label, (W, H))
 
         flip = self.flip and np.random.choice([True, False])
         if flip:
-            image = image.transpose(Image.FLIP_LEFT_RIGHT)
-            label = label.transpose(Image.FLIP_LEFT_RIGHT)
+            image = cv2.flip(image, 1)
+            label = cv2.flip(label, 1)
+
         if np.all(self.imsize > 0):
             H, W = self.imsize
             image = image.resize((W, H))
@@ -129,13 +132,13 @@ class CaffeDataset(torch.utils.data.Dataset):
     def __getitem__(self, index):        
         img_fullname = join(self.img_dir, self.__item_names[index]+".jpg")
         assert isfile(img_fullname), img_fullname
-        image = cv2.imread(img_fullname, 1)
+        image = imread(img_fullname, backend="cv2")
         assert image.ndim == 3
         image = image - np.array((104.00699, 116.66877, 122.67892))
 
         lb_fullname = join(self.label_dir, self.__item_names[index]+".png")
         assert isfile(lb_fullname), lb_fullname
-        label = cv2.imread(lb_fullname, 0) / 255.0
+        label = imread(lb_fullname, backend="cv2", grayscale=True) / 255.0
         assert label.ndim == 2
 
         if image.shape[:2] != label.shape:
