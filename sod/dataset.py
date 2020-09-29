@@ -2,9 +2,9 @@ import torch
 from PIL import Image
 import numpy as np
 from scipy.ndimage.morphology import distance_transform_edt
-from os.path import join, isdir, isfile
+from os.path import join, isdir, isfile, splitext
 from skimage.filters import sobel_h, sobel_v
-import cv2
+import cv2, os
 from vlkit.dense import seg2edge, dense2flux, flux2angle, quantize_angle, dequantize_angle
 from vlkit.io import imread
 
@@ -32,11 +32,10 @@ def edge2flux(edge):
 
 
 class SODDataset(torch.utils.data.Dataset):
-    def __init__(self, img_dir, label_dir, name_list, flip=True, imsize=[0,0], backend="pil",
+    def __init__(self, img_dir, label_dir, flip=True, imsize=[0,0], backend="pil",
                  image_transform=None, label_transform=None):
         assert isdir(img_dir), "%s doesn't exist" % img_dir
         assert isdir(label_dir), "%s doesn't exist" % label_dir
-        assert isfile(name_list)
         assert isinstance(imsize, list) and len(imsize) == 2
 
         self.img_dir = img_dir
@@ -46,10 +45,7 @@ class SODDataset(torch.utils.data.Dataset):
         self.backend = backend
         self.image_transform = image_transform
         self.label_transform = label_transform
-
-        self.__item_names = [line.strip() for line in open(name_list, 'r')]
-
-        assert isdir(img_dir) and isdir(label_dir)
+        self.__item_names = [splitext(i)[0] for i in os.listdir(img_dir)]
 
     def __getitem__(self, index):        
         img_fullname = join(self.img_dir, self.__item_names[index]+".jpg")
