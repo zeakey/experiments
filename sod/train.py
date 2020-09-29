@@ -1,4 +1,3 @@
-# https://github.com/NVIDIA/DALI/blob/master/docs/examples/pytorch/resnet50/main.py
 import torch, torchvision
 import torch.nn as nn
 import torch.nn.functional as F
@@ -14,24 +13,20 @@ from vlkit import get_logger
 from vlkit import image as vlimage
 from vlkit.pytorch import save_checkpoint, AverageMeter
 from vlkit.lr import CosAnnealingLR, MultiStepLR
-# distributed
-import torch.distributed as dist
 import apex
-from apex.parallel import DistributedDataParallel as DDP
 import warnings
 warnings.filterwarnings("ignore", "(Possibly )?corrupt EXIF data", UserWarning)
 from models.drn_seg import DRNSeg
 from models.poolnet import poolnet
 from dataset import SODDataset
 from utils import accuracy, init_from_pretrained, save_maps
-from crf import par_batch_crf_dataloader
-from floss import FLoss, F_cont
 
 parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                     help='manual epoch number (useful on restarts)')
-parser.add_argument('--print-freq', default=5, type=int,
+parser.add_argument('--print-freq', default=10, type=int,
                     metavar='N', help='print frequency (default: 10)')
+parser.add_argument('--test-freq', default=2, type=int, help='testing frequency')
 parser.add_argument('--arch', '--a', metavar='STR', default="drn_d_54", help='model')
 # data
 parser.add_argument('--train-data', metavar='DIR', default="data/DUTS/DUTS-TR", help='path to dataset')
@@ -67,45 +62,25 @@ parser.add_argument('--static-loss-scale', type=float, default=128,
 parser.add_argument('--dynamic-loss-scale', action='store_true',
                     help='Use dynamic loss scaling.  If supplied, this argument supersedes ' +
                     '--static-loss-scale.')
-# distributed
-parser.add_argument("--local_rank", default=0, type=int)
-parser.add_argument('--sync-bn', action='store_true',
-                    help='Use sync BN.')
-
-parser.add_argument("--setting", default=0, type=int)
-
 args = parser.parse_args()
 
 
-if args.local_rank == 0:
-    os.makedirs(args.tmp, exist_ok=True)
+os.makedirs(args.tmp, exist_ok=True)
 
 args.milestones = [int(i) for i in args.milestones.split(',')]
 args.imsize = [int(i) for i in args.imsize.split(',')]
 
 torch.backends.cudnn.benchmark = True
 
-if args.local_rank == 0:
-    tfboard_writer = writer = SummaryWriter(log_dir=args.tmp)
-    logger = get_logger(join(args.tmp, "log.txt"))
+tfboard_writer = writer = SummaryWriter(log_dir=args.tmp)
+logger = get_logger(join(args.tmp, "log.txt"))
 
-args.distributed = False
-if 'WORLD_SIZE' in os.environ:
-    args.distributed = int(os.environ['WORLD_SIZE']) > 1
-
-if args.distributed:
-    args.gpu = args.local_rank % torch.cuda.device_count()
-    torch.cuda.set_device(args.gpu)
-    torch.distributed.init_process_group(backend='nccl',
-                                            init_method='env://')
-    args.world_size = torch.distributed.get_world_size()
-
-DTYPE = torch.float
-if args.fp16:
-    from apex import amp
-    DTYPE = torch.half
-    assert args.distributed, "FP16 can be only used in Distributed mode"
-    assert torch.backends.cudnn.enabled, "fp16 mode requires cudnn backend to be enabled."
+test_datasets = {
+    "DUTS": {"image": "data/DUTS/DUTS-TE/images", "mask": "data/DUTS/DUTS-TE/gt-masks"},
+    "DUT-OMRON": {"image": "data/DUT-OMRON/image", "mask": "data/DUT-OMRON/mask"},
+    "HKU-IS": {"image": "data/HKU-IS/image", "mask": "data/HKU-IS/mask"},
+    "PASCAL-S": {"image": "data/PASCAL-S/image", "mask": "data/PASCAL-S/mask"},
+    }
 
 def image_transform(image):
     assert isinstance(image, np.ndarray) and image.ndim == 3, "%s, %s"%(type(image), image.shape)
@@ -118,59 +93,43 @@ def label_transform(label):
     return label
 train_dataset = SODDataset(img_dir=join(args.train_data, "images"),
                 label_dir=join(args.train_data, "gt-masks"), imsize=args.imsize,
-                name_list=join(args.train_data, "train_names.txt"), flip=True, backend=args.backend,
-                image_transform=image_transform, label_transform=label_transform)
-test_dataset = SODDataset(img_dir=join(args.test_data, "images/"),
-                label_dir=join(args.test_data, "gt-masks/"), imsize=args.imsize,
-                name_list=join(args.test_data, "test_names.txt"), flip=False, backend=args.backend,
-                image_transform=image_transform, label_transform=label_transform)
+                flip=True, backend=args.backend, image_transform=image_transform, label_transform=label_transform)
 
-if args.distributed:
-        train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
-        test_sampler = torch.utils.data.distributed.DistributedSampler(test_dataset, shuffle=False)
-else:
-    train_sampler = None
-    val_sampler = None
-    test_sampler = None
+test_datasets = {
+    k: SODDataset(img_dir=v["image"], label_dir=v["mask"], imsize=args.imsize, flip=False, backend=args.backend,
+               image_transform=image_transform, label_transform=label_transform) \
+    for k, v in test_datasets.items()
+}
 
 train_loader = torch.utils.data.DataLoader(
     train_dataset,
-    batch_size=args.batch_size, shuffle=(train_sampler is None), num_workers=args.workers,
-    pin_memory=True, sampler=train_sampler)
-
-test_loader = torch.utils.data.DataLoader(
-    test_dataset,
-    batch_size=args.batch_size, shuffle=False, num_workers=args.workers,
-    pin_memory=True, drop_last=False, sampler=test_sampler)
-
+    batch_size=args.batch_size, shuffle=True, num_workers=args.workers,
+    pin_memory=True, sampler=None)
 train_loader_len = len(train_loader)
 
+test_loaders = {
+    k: torch.utils.data.DataLoader(
+    dataset,
+    batch_size=args.batch_size, shuffle=False, num_workers=args.workers,
+    pin_memory=True, drop_last=False, sampler=None) \
+    for k, dataset in test_datasets.items()
+}
+
 def main():
-    if args.local_rank == 0:
-        logger.info(args)
+    logger.info(args)
     # model and optimizer
-    model = DRNSeg("drn_d_54", setting=args.setting, classes=1)
+    model = DRNSeg("drn_d_54", classes=1)
     if args.freeze_bn:
         for name, p in model.named_parameters():
             if "base" in name and "bn" in name:
                 p.requires_grad = False
-                if args.local_rank == 0:
-                    logger.info("Set requires_grad=False: %s"%name)
+                logger.info("Set requires_grad=False: %s"%name)
 
     if isfile(args.pretrained):
-        if args.local_rank == 0:
-            model = init_from_pretrained(model, args.pretrained, verbose=True)
-        else:
-            model = init_from_pretrained(model, args.pretrained, verbose=False)
-
-    if args.sync_bn:
-        if args.local_rank == 0:
-            logger.info("using apex synced BN")
-        model = apex.parallel.convert_syncbn_model(model)
+        model = init_from_pretrained(model, args.pretrained, verbose=True)
 
     model = model.cuda()
 
-    
     if True:
         # poolnet optimizer
         optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=args.lr, weight_decay=args.weight_decay)
@@ -183,39 +142,35 @@ def main():
     if args.fp16:
         model, optimizer = amp.initialize(model, optimizer, opt_level="O2")
 
-    if args.distributed:
-        model = DDP(model, delay_allreduce=True)
-
-    if args.local_rank == 0:
-        logger.info(optimizer)
-
-    # records
-    best_mae = 10000
+    logger.info(optimizer)
 
     for epoch in range(args.epochs):
+        # train and record logs
         train_loss, ori_losses = train_epoch(model, train_loader, optimizer, lr_scheduler, epoch)
-        test_loss, test_mae, ori_acc = test(model, test_loader, epoch)
+        tfboard_writer.add_scalar("train/seg-loss", train_loss, epoch)
+        tfboard_writer.add_scalar("train/ori-loss", ori_losses, epoch)
+        tfboard_writer.add_scalar("train/lr", optimizer.param_groups[0]["lr"], epoch)
 
+        # test and record logs
+        if epoch % args.test_freq == 0 or epoch == args.epochs-1:
+            for k, loader in test_loaders.items():
+                logger.info("Testing on '%s' dataset..."%k)
+                test_loss, test_mae, ori_acc = test(model, loader, epoch)
+
+                tfboard_writer.add_scalar("test/"+k+"/seg-loss", test_loss, epoch)
+                tfboard_writer.add_scalar("test/"+k+"/mae", test_mae, epoch)
+                tfboard_writer.add_scalar("test/"+k+"/ori-acc", ori_acc, epoch)
+
+        # adjust lr
         if epoch in args.milestones:
             args.lr = args.lr * args.gamma
-            if args.local_rank == 0:
-                logger.info("Epoch %d, decay learning rate to %f"%(epoch, args.lr))
+            logger.info("Epoch %d, decay learning rate to %f"%(epoch, args.lr))
             optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=args.lr, weight_decay=args.weight_decay)
 
-        if args.local_rank == 0:
-            tfboard_writer.add_scalar("train/seg-loss", train_loss, epoch)
-            tfboard_writer.add_scalar("train/ori-loss", ori_losses, epoch)
-            tfboard_writer.add_scalar("train/lr", optimizer.param_groups[0]["lr"], epoch)
-            tfboard_writer.add_scalar("test/seg-loss", test_loss, epoch)
-            tfboard_writer.add_scalar("test/mae", test_mae, epoch)
-            tfboard_writer.add_scalar("test/Orientation-Accuracy", ori_acc, epoch)
-
-    if args.local_rank == 0:
-        logger.info("Optimization done, ALL results saved to %s." % args.tmp)
-        tfboard_writer.close()
-        for h in logger.handlers:
-            h.close()
-
+    logger.info("Optimization done, ALL results saved to %s." % args.tmp)
+    tfboard_writer.close()
+    for h in logger.handlers:
+        h.close()
 
 def train_epoch(model, train_loader, optimizer, lr_scheduler, epoch):
     batch_time = AverageMeter()
@@ -236,43 +191,27 @@ def train_epoch(model, train_loader, optimizer, lr_scheduler, epoch):
         image = data["image"]
         target = data["label"]
         # edge = data["edge"]
-        # orientation = data["orientation"]
-        # mask = data["mask"]
-        if args.distributed:
-            image = image.cuda(non_blocking=True).to(dtype=DTYPE)
+        orientation = data["orientation"]
+        mask = data["mask"]
+
 
         image = image.cuda() # (non_blocking=True)
         target = target.cuda().float() # (non_blocking=True).float()
         # edge = edge.cuda(non_blocking=True).float()
-        # orientation = orientation.cuda(non_blocking=True).long()
-        # mask = mask.cuda(non_blocking=True)
+        orientation = orientation.cuda(non_blocking=True).long().squeeze(dim=1)
+        mask = mask.cuda(non_blocking=True).squeeze(dim=1)
 
         # measure data loading time
         data_time.update(time.time() - end)
-        output = model(image)["seg"]
+        output = model(image)
 
-        # seg_loss = F.binary_cross_entropy(torch.sigmoid(output["seg"]), target)
-        seg_loss = F.binary_cross_entropy_with_logits(output, target, reduction=args.reduction)
+        seg_loss = F.binary_cross_entropy_with_logits(output["seg"], target, reduction=args.reduction)
 
-        # ori_loss = F.cross_entropy(output["orientation"], orientation, reduction="none")
-        # ori_loss = (ori_loss * mask).sum() / mask.sum()
-        ori_loss = torch.zeros_like(seg_loss)
+        ori_loss = F.cross_entropy(output["orientation"], orientation, reduction="none")
+        ori_loss = (ori_loss * mask).sum() / mask.sum()
 
-        # edge_loss = F.binary_cross_entropy(torch.sigmoid(output["edge"]), edge, reduction="none")
-        # mask = torch.where(edge==0, edge.mean(), 1-edge.mean())
-        # mask /= max(mask.mean(), 1e-5)
-        # edge_loss = (edge_loss * mask).mean()
-        ori_loss = torch.zeros_like(seg_loss)
-
-        if args.distributed:
-            reduced_seg_loss = reduce_tensor(seg_loss.data)
-            reduced_ori_loss = reduce_tensor(ori_loss.data)
-        else:
-            reduced_seg_loss = seg_loss.data
-            reduced_ori_loss = ori_loss.data
-
-        seg_losses.update(reduced_seg_loss.item(), image.size(0))
-        ori_losses.update(reduced_ori_loss.item(), image.size(0))
+        seg_losses.update(seg_loss.item(), image.size(0))
+        ori_losses.update(ori_loss.item(), image.size(0))
 
         # compute and adjust lr
         if lr_scheduler is not None:
@@ -281,7 +220,7 @@ def train_epoch(model, train_loader, optimizer, lr_scheduler, epoch):
                 param_group['lr'] = lr
 
         # compute gradient and do SGD step
-        loss = seg_loss# + ori_loss
+        loss = seg_loss # + ori_loss
         optimizer.zero_grad()
 
         # scale loss before backward
@@ -293,25 +232,21 @@ def train_epoch(model, train_loader, optimizer, lr_scheduler, epoch):
 
         optimizer.step()
 
-        if args.distributed:
-            torch.cuda.synchronize()
         # measure elapsed time
         batch_time.update(time.time() - end)
         end = time.time()
 
         lr = optimizer.param_groups[0]["lr"]
-
-        if args.local_rank == 0 and i % args.print_freq == 0:
+        if i % args.print_freq == 0:
             logger.info('Epoch[{0}/{1}] It[{2}/{3}]\t'
-                  'Batch Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
-                  'Data Time {data_time.val:.3f} ({data_time.avg:.3f})\t'
-                  'SegLoss {seg_loss.val:.3f} ({seg_loss.avg:.3f})\t'
-                  'OriLoss {ori_loss.val:.3f} ({ori_loss.avg:.3f})\t'
-                  'LR: {lr:.2E}'.format(
-                   epoch, args.epochs, i, train_loader_len,
-                   batch_time=batch_time, data_time=data_time, seg_loss=seg_losses, ori_loss=ori_losses, lr=lr))
+                    'Batch Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
+                    'Data Time {data_time.val:.3f} ({data_time.avg:.3f})\t'
+                    'SegLoss {seg_loss.val:.3f} ({seg_loss.avg:.3f})\t'
+                    'OriLoss {ori_loss.val:.3f} ({ori_loss.avg:.3f})\t'
+                    'LR: {lr:.2E}'.format(
+                    epoch, args.epochs, i, train_loader_len,
+                    batch_time=batch_time, data_time=data_time, seg_loss=seg_losses, ori_loss=ori_losses, lr=lr))
 
-            tfboard_writer.add_scalar("train/iter-segloss", seg_losses.val, epoch*len(train_loader)+i)
     return seg_losses.avg, ori_losses.avg
 
 def test(model, test_loader, epoch):
@@ -329,18 +264,17 @@ def test(model, test_loader, epoch):
             metas = data["metas"]
             image = data["image"].cuda()
             target = data["label"].cuda().float()
-            # mask = data["mask"].cuda()
-            # orientation = data["orientation"].cuda().long()
+            mask = data["mask"].cuda().squeeze(dim=1)
+            orientation = data["orientation"].cuda().long().squeeze(dim=1)
 
             # compute output
-            output = model(image)["seg"]
-            seg_pred = torch.sigmoid(output)
-            seg_loss = torch.nn.functional.binary_cross_entropy_with_logits(output, target, reduction=args.reduction)
+            output = model(image)
+            seg_pred = torch.sigmoid(output["seg"])
+            seg_loss = torch.nn.functional.binary_cross_entropy_with_logits(output["seg"], target, reduction=args.reduction)
 
-            # ori_pred = output["orientation"].transpose(0,1)[:, mask].t()
-            # ori_gt = orientation[mask]
-            # ori_top1, ori_top2 = accuracy(ori_pred, ori_gt, topk=(1,2))
-            ori_top1 = torch.zeros_like(seg_loss)
+            ori_pred = output["orientation"].transpose(0,1)[:, mask].t()
+            ori_gt = orientation[mask]
+            ori_top1, ori_top2 = accuracy(ori_pred, ori_gt, topk=(1,2))
 
             # mae and F-measure
             mae_ = (seg_pred - target).abs().mean()
@@ -355,30 +289,21 @@ def test(model, test_loader, epoch):
                 diff = np.concatenate((seg_pred, gt, diff), axis=3).astype(np.uint8)
                 save_maps(diff, filenames, join(args.tmp, "epoch-%d"%epoch, "diff"))
 
-            if args.distributed:
-                reduced_seg_loss = reduce_tensor(seg_loss.data)
-                reduced_mae = reduce_tensor(mae_)
-            else:
-                reduced_seg_loss = seg_loss.data
-                reduced_mae = mae_.data
-
-            seg_losses.update(reduced_seg_loss.item(), image.size(0))
-            mae.update(reduced_mae.item(), image.size(0))
+            seg_losses.update(seg_loss.item(), image.size(0))
+            mae.update(mae.item(), image.size(0))
             ori_acc1.update(ori_top1.item(), image.size(0))
             # measure elapsed time
             batch_time.update(time.time() - end)
             end = time.time()
 
-            if args.local_rank == 0 and i % args.print_freq == 0:
-                logger.info('Test: [{0}/{1}]\t'
-                      'SegLoss {seg_loss.val:.3f} (avg={seg_loss.avg:.3f})\t'
-                      'MAE {mae.val:.3f} (avg={mae.avg:.3f})\t'
-                      'OriAcc={ori_acc.avg:.3f}\t'.format(
-                       i, test_loader_len, seg_loss=seg_losses, mae=mae, ori_acc=ori_acc1))
+            logger.info('Test: [{0}/{1}]\t'
+                    'SegLoss {seg_loss.val:.3f} (avg={seg_loss.avg:.3f})\t'
+                    'MAE {mae.val:.3f} (avg={mae.avg:.3f})\t'
+                    'OriAcc={ori_acc.avg:.3f}\t'.format(
+                    i, test_loader_len, seg_loss=seg_losses, mae=mae, ori_acc=ori_acc1))
 
-    if args.local_rank == 0:
-        logger.info(' * MAE {mae.avg:.5f} OriAcc={ori_acc.avg:.3f}'\
-            .format(mae=mae, ori_acc=ori_acc1))
+    logger.info(' * MAE {mae.avg:.5f} OriAcc={ori_acc.avg:.3f}'\
+        .format(mae=mae, ori_acc=ori_acc1))
 
     return seg_losses.avg, mae.avg, ori_acc1.avg
 
