@@ -44,9 +44,9 @@ parser.add_argument('-j', '--workers', default=1, type=int, help='number of data
 # optimization
 parser.add_argument('--epochs', default=24, type=int, metavar='N',
                     help='number of total epochs to run')
-parser.add_argument('--warmup-epochs', type=int, default=2, help="warmup epochs")
+parser.add_argument('--warmup-epochs', type=int, default=0, help="warmup epochs")
 parser.add_argument('--milestones', default="12,18", type=str)
-parser.add_argument('--lr', '--learning-rate', default=0.1, type=float,
+parser.add_argument('--lr', '--learning-rate', default=1e-4, type=float,
                     metavar='LR', help='initial learning rate')
 parser.add_argument('--lr-scheduler', default="cos", type=str, help='LR scheduler')
 parser.add_argument('--gamma', default=0.1, type=float, help='decrease learning rate by gamma')
