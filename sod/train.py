@@ -164,7 +164,7 @@ def main():
 
                 tfboard_writer.add_scalar("test-seg-loss/" + k, test_loss, epoch)
                 tfboard_writer.add_scalar("test-mae/" + k, test_mae, epoch)
-                tfboard_writer.add_scalar("test-ori-acc" + k, ori_acc, epoch)
+                tfboard_writer.add_scalar("test-ori-acc/" + k, ori_acc, epoch)
 
         # adjust lr
         if epoch in args.milestones:
