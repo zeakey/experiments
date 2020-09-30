@@ -64,6 +64,11 @@ parser.add_argument('--dynamic-loss-scale', action='store_true',
                     '--static-loss-scale.')
 args = parser.parse_args()
 
+# for reproducibility
+torch.manual_seed(0)
+np.random.seed(0)
+torch.backends.cudnn.deterministic = True
+torch.backends.cudnn.benchmark = False
 
 os.makedirs(args.tmp, exist_ok=True)
 
@@ -157,9 +162,9 @@ def main():
                 logger.info("Testing on '%s' dataset..."%k)
                 test_loss, test_mae, ori_acc = test(model, loader, epoch)
 
-                tfboard_writer.add_scalar("test/"+k+"/seg-loss", test_loss, epoch)
-                tfboard_writer.add_scalar("test/"+k+"/mae", test_mae, epoch)
-                tfboard_writer.add_scalar("test/"+k+"/ori-acc", ori_acc, epoch)
+                tfboard_writer.add_scalar("test-seg-loss/" + k, test_loss, epoch)
+                tfboard_writer.add_scalar("test-mae/" + k, test_mae, epoch)
+                tfboard_writer.add_scalar("test-ori-acc" + k, ori_acc, epoch)
 
         # adjust lr
         if epoch in args.milestones:
@@ -220,7 +225,7 @@ def train_epoch(model, train_loader, optimizer, lr_scheduler, epoch):
                 param_group['lr'] = lr
 
         # compute gradient and do SGD step
-        loss = seg_loss # + ori_loss
+        loss = seg_loss + ori_loss
         optimizer.zero_grad()
 
         # scale loss before backward
@@ -280,17 +285,17 @@ def test(model, test_loader, epoch):
             mae_ = (seg_pred - target).abs().mean()
 
             filenames = [splitext(split(i)[-1])[0] for i in metas["filename"]]
-            diff = ((seg_pred >= 0.5).float() - target).detach().cpu().numpy()
+            diff = (seg_pred - target).detach().cpu().numpy()
             diff = (diff * 127 + 128)
 
-            if (epoch+1) % 5 == 0 or epoch == args.epochs-1:
+            if (epoch+1) % 10 == 0 or epoch == args.epochs-1:
                 seg_pred = (seg_pred >= 0.5).cpu().numpy()*255
                 gt = target.cpu().numpy()*255
                 diff = np.concatenate((seg_pred, gt, diff), axis=3).astype(np.uint8)
                 save_maps(diff, filenames, join(args.tmp, "epoch-%d"%epoch, "diff"))
 
             seg_losses.update(seg_loss.item(), image.size(0))
-            mae.update(mae.item(), image.size(0))
+            mae.update(mae_.item(), image.size(0))
             ori_acc1.update(ori_top1.item(), image.size(0))
             # measure elapsed time
             batch_time.update(time.time() - end)
