@@ -1,19 +1,12 @@
 # https://github.com/NVIDIA/DALI/blob/master/docs/examples/pytorch/resnet50/main.py
 import torch, torchvision
 import torch.nn as nn
-from torch.optim import lr_scheduler
-import torchvision
-import torchvision.transforms as transforms
-import torchvision.datasets as datasets
 import numpy as np
 import os, sys, argparse, time, shutil
-from os.path import join, split, isdir, isfile, dirname, abspath
+from os.path import join, split, isdir, isfile
 from torch.utils.tensorboard import SummaryWriter
-from vlkit.training import Logger, run_path
-from vlkit import image as vlimage
+from vlkit import get_logger, run_path
 from vlkit.pytorch import save_checkpoint, AverageMeter, accuracy
-from vlkit.pytorch.datasets import ilsvrc2012
-import vlkit.pytorch as vlpytorch
 from vlkit.lr import CosAnnealingLR, MultiStepLR
 # DALI data reader
 from nvidia.dali.pipeline import Pipeline
@@ -25,7 +18,14 @@ import torch.distributed as dist
 from apex.parallel import DistributedDataParallel as DDP
 import warnings
 warnings.filterwarnings("ignore", "(Possibly )?corrupt EXIF data", UserWarning)
-import preact_resnet
+
+try:
+    from apex.parallel import DistributedDataParallel as DDP
+    from apex.fp16_utils import *
+    from apex import amp, optimizers
+    from apex.multi_tensor_apply import multi_tensor_applier
+except ImportError:
+    raise ImportError("Please install apex from https://www.github.com/nvidia/apex to run this example.")
 
 parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
@@ -36,7 +36,7 @@ parser.add_argument('--arch', '--a', metavar='STR', default="torchvision.models.
 # data
 parser.add_argument('--data', metavar='DIR', default=None, help='path to dataset')
 parser.add_argument('--use-rec', action='store_true', help='Use mxnet record.')
-parser.add_argument('--batch-size', default=256, type=int, metavar='N', help='mini-batch size')
+parser.add_argument('--batch-size', default=64, type=int, metavar='N', help='mini-batch size')
 parser.add_argument('--imsize', default=256, type=int, metavar='N', help='im crop size')
 parser.add_argument('--imcrop', default=224, type=int, metavar='N', help='image crop size')
 parser.add_argument('-j', '--workers', default=4, type=int, help='number of data loading workers')
@@ -56,7 +56,7 @@ parser.add_argument('--weight-decay', '--wd', default=1e-4, type=float,
                     metavar='W', help='weight decay')
 parser.add_argument('--resume', default="", type=str, metavar='PATH',
                     help='path to latest checkpoint')
-parser.add_argument('--tmp', help='tmp folder', default="tmp/pre-resnet50")
+parser.add_argument('--tmp', help='tmp folder', default="work-dirs/resnet50")
 # FP16
 parser.add_argument('--fp16', action='store_true',
                     help='Runs CPU based version of DALI pipeline.')
@@ -71,14 +71,14 @@ parser.add_argument('--dali-cpu', action='store_true',
                     help='Runs CPU based version of DALI pipeline.')
 # debug
 args = parser.parse_args()
-args.tmp = run_path(args.tmp)
-os.makedirs(args.tmp, exist_ok=True)
+
+if args.local_rank == 0:
+    args.tmp = run_path(args.tmp)
+    os.makedirs(args.tmp, exist_ok=True)
+
 args.milestones = [int(i) for i in args.milestones.split(',')]
 
 torch.backends.cudnn.benchmark = True
-
-if args.fp16:
-    from apex import amp
 
 # DALI pipelines
 class HybridTrainPipe(Pipeline):
@@ -106,10 +106,9 @@ class HybridTrainPipe(Pipeline):
                                                  num_attempts=100)
         self.res = ops.Resize(device=dali_device, resize_x=crop, resize_y=crop, interp_type=types.INTERP_TRIANGULAR)
         self.cmnp = ops.CropMirrorNormalize(device="gpu",
-                                            output_dtype=types.FLOAT,
+                                            dtype=types.FLOAT,
                                             output_layout=types.NCHW,
                                             crop=(crop, crop),
-                                            image_type=types.RGB,
                                             mean=[0.485 * 255,0.456 * 255,0.406 * 255],
                                             std=[0.229 * 255,0.224 * 255,0.225 * 255])
         self.coin = ops.CoinFlip(probability=0.5)
@@ -134,10 +133,9 @@ class HybridValPipe(Pipeline):
         self.decode = ops.ImageDecoder(device="mixed", output_type=types.RGB)
         self.res = ops.Resize(device="gpu", resize_shorter=size, interp_type=types.INTERP_TRIANGULAR)
         self.cmnp = ops.CropMirrorNormalize(device="gpu",
-                                            output_dtype=types.FLOAT,
+                                            dtype=types.FLOAT,
                                             output_layout=types.NCHW,
                                             crop=(crop, crop),
-                                            image_type=types.RGB,
                                             mean=[0.485 * 255,0.456 * 255,0.406 * 255],
                                             std=[0.229 * 255,0.224 * 255,0.225 * 255])
     def define_graph(self):
@@ -152,7 +150,7 @@ criterion = torch.nn.CrossEntropyLoss()
 
 if args.local_rank == 0:
     tfboard_writer = writer = SummaryWriter(log_dir=args.tmp)
-    logger = Logger(join(args.tmp, "log.txt"))
+    logger = get_logger(join(args.tmp, "log.txt"))
     print(args.local_rank)
 
 args.distributed = False
@@ -225,7 +223,7 @@ def main():
             if args.local_rank == 0:
                 logger.info("=> no checkpoint found at '{}'".format(args.resume))
 
-    scheduler = MultiStepLR(loader_len=train_loader_len,
+    scheduler = MultiStepLR(train_loader_len,
                    milestones=args.milestones, gamma=args.gamma, warmup_epochs=args.warmup_epochs)
 
     for epoch in range(args.start_epoch, args.epochs):
@@ -308,9 +306,12 @@ def train(train_loader, model, optimizer, lrscheduler, epoch):
         # compute gradient and do SGD step
         optimizer.zero_grad()
 
-        # scale loss before backward
-        with amp.scale_loss(loss, optimizer) as scaled_loss:
-            scaled_loss.backward()
+        if args.fp16:
+            # scale loss before backward
+            with amp.scale_loss(loss, optimizer) as scaled_loss:
+                scaled_loss.backward()
+        else:
+            loss.backward()
 
         optimizer.step()
 
@@ -327,7 +328,7 @@ def train(train_loader, model, optimizer, lrscheduler, epoch):
             logger.info('Epoch[{0}/{1}] It[{2}/{3}]\t'
                   'Batch Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
                   'Data Time {data_time.val:.3f} ({data_time.avg:.3f})\t'
-                  'Train Loss {loss.val:.3f} ({loss.avg:.3f})\t'
+                  'Loss {loss.val:.3f} ({loss.avg:.3f})\t'
                   'Prec@1 {top1.val:.3f} ({top1.avg:.3f})\t'
                   'Prec@5 {top5.val:.3f} ({top5.avg:.3f})\t'
                   'LR: {lr:.2E}'.format(
@@ -377,7 +378,7 @@ def validate(val_loader, model, epoch):
 
             if args.local_rank == 0 and i % args.print_freq == 0:
                 logger.info('Test: [{0}/{1}]\t'
-                      'Test Loss {loss.val:.3f} (avg={loss.avg:.3f})\t'
+                      'Loss {loss.val:.3f} (avg={loss.avg:.3f})\t'
                       'Prec@1 {top1.val:.3f} (avg={top1.avg:.3f})\t'
                       'Prec@5 {top5.val:.3f} (avg={top5.avg:.3f})'.format(
                        i, val_loader_len, loss=losses, top1=top1, top5=top5))
