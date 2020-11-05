@@ -2,12 +2,19 @@
 import torch, torchvision
 import torch.nn as nn
 import numpy as np
+
 import os, sys, argparse, time, shutil
-from os.path import join, split, isdir, isfile
-from torch.utils.tensorboard import SummaryWriter
+from os.path import join, split, isdir, isfile, dirname, abspath
+
+# add "experiments/" into python path
+sys.path.insert(0, abspath(join(dirname(__file__), "..")))
+print(abspath(join(dirname(__file__), "..")))
+from models import resnetv1
+
 from vlkit import get_logger, run_path
 from vlkit.pytorch import save_checkpoint, AverageMeter, accuracy
 from vlkit.lr import CosAnnealingLR, MultiStepLR
+from torch.utils.tensorboard import SummaryWriter
 # DALI data reader
 from nvidia.dali.pipeline import Pipeline
 import nvidia.dali.ops as ops
@@ -32,7 +39,7 @@ parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                     help='manual epoch number (useful on restarts)')
 parser.add_argument('--print-freq', default=50, type=int,
                     metavar='N', help='print frequency (default: 10)')
-parser.add_argument('--arch', '--a', metavar='STR', default="torchvision.models.resnet.resnet50", help='model')
+parser.add_argument('--arch', '--a', metavar='STR', default="resnetv1.resnet50", help='model')
 # data
 parser.add_argument('--data', metavar='DIR', default=None, help='path to dataset')
 parser.add_argument('--use-rec', action='store_true', help='Use mxnet record.')
@@ -262,7 +269,9 @@ def main():
 
     if args.local_rank == 0:
         logger.info("Optimization done, ALL results saved to %s." % args.tmp)
-        logger.close()
+        tfboard_writer.close()
+        for h in logger.handlers:
+            h.close()
 
 
 def train(train_loader, model, optimizer, lrscheduler, epoch):
