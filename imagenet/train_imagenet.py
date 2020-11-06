@@ -156,7 +156,7 @@ class HybridValPipe(Pipeline):
 criterion = torch.nn.CrossEntropyLoss()
 
 if args.local_rank == 0:
-    tfboard_writer = writer = SummaryWriter(log_dir=args.tmp)
+    tfboard_writer = SummaryWriter(log_dir=args.tmp)
     logger = get_logger(join(args.tmp, "log.txt"))
     print(args.local_rank)
 
