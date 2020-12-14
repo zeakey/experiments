@@ -57,11 +57,11 @@ os.makedirs(args.tmp, exist_ok=True)
 logger = get_logger(join(args.tmp, "log.txt"))
 writer = SummaryWriter(log_dir=args.tmp)
 
-model = resnetv1_cifar.resnet18(num_classes=10, use_forest=args.use_forest)
-#if args.use_forest:
-#    model = nn.Sequential(model, Forest(in_features=512, num_trees=8, tree_depth=8, num_classes=10))
-#else:
-#    model = nn.Sequential(model, nn.Linear(512, 100))
+model = resnetv1_cifar.resnet18()
+if args.use_forest:
+    model = nn.Sequential(model, Forest(in_features=512, num_trees=12, tree_depth=5, num_classes=10))
+else:
+    model = nn.Sequential(model, nn.Linear(512, 100), nn.Softmax(dim=1))
 
 #model = nn.Sequential(*model)
 model = model.cuda()
@@ -129,10 +129,7 @@ def train(train_loader, epoch):
         data = data.cuda()
 
         output = model(data)
-        if args.use_forest:
-            loss = F.nll_loss(torch.log(output), target)
-        else:
-            loss = criterion(output, target)
+        loss = F.nll_loss(torch.log(output), target)
 
         # measure accuracy and record loss
         acc1, acc5 = accuracy(output, target, topk=(1, 5))
@@ -178,10 +175,7 @@ def validate(val_loader):
             data = data.cuda()
             # compute output
             output = model(data)
-            if args.use_forest:
-                loss = F.nll_loss(torch.log(output), target)
-            else:
-                loss = criterion(output, target)
+            loss = F.nll_loss(torch.log(output), target)
             # measure accuracy and record loss
             acc1, acc5 = accuracy(output, target, topk=(1, 5))
             losses.update(loss.item(), data.size(0))
