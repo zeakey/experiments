@@ -4,8 +4,8 @@ import torch.nn.functional as F
 import torch.optim as optim
 import torchvision
 from forest import Forest
-from vltools import Logger
-from vltools.pytorch import AverageMeter, accuracy
+from vlkit import get_logger
+from vlkit.pytorch import AverageMeter, accuracy
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -19,8 +19,8 @@ transform = torchvision.transforms.Compose([
     torchvision.transforms.Normalize((0.1307,), (0.3081,))
     ])
 
-train_dataset = torchvision.datasets.MNIST('/home/kai/.torch/data', train=True, download=True, transform=transform)
-val_dataset = torchvision.datasets.MNIST('/home/kai/.torch/data', train=False, download=True, transform=transform)
+train_dataset = torchvision.datasets.MNIST('~/.torch/data', train=True, download=True, transform=transform)
+val_dataset = torchvision.datasets.MNIST('~/.torch/data', train=False, download=True, transform=transform)
 
 train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=256, shuffle=True)
 val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=100, shuffle=False)
@@ -52,7 +52,7 @@ class LeNet(nn.Module):
         return x
 
 os.makedirs("tmp", exist_ok=True)
-logger = Logger("tmp/mnist.log.txt")
+logger = get_logger("tmp/mnist.log.txt")
 
 model = LeNet().cuda()
 
