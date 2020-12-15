@@ -26,10 +26,10 @@ parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
 parser.add_argument('--print-freq', default=20, type=int,
                     metavar='N', help='print frequency (default: 10)')
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N')
-parser.add_argument('--epochs', default=200, type=int, metavar='N',
+parser.add_argument('--epochs', default=120, type=int, metavar='N',
                     help='number of total epochs to run')
 
-parser.add_argument('--num_classes', default=10, type=int, metavar='N', help='Number of classes')
+parser.add_argument('--num-classes', default=10, type=int, metavar='N', help='Number of classes')
 parser.add_argument('--bs', '--batch-size', default=64, type=int,
                     metavar='N', help='mini-batch size')
 
@@ -62,14 +62,11 @@ writer = SummaryWriter(log_dir=args.tmp)
 model = resnetv1_cifar.resnet18()
 if args.use_forest:
     model = nn.Sequential(model, Forest(in_features=512, num_trees=args.num_trees,
-        tree_depth=args.num_trees, num_classes=10))
+        tree_depth=args.num_trees, num_classes=args.num_classes, norm=False))
 else:
-    model = nn.Sequential(model, nn.Linear(512, 100), nn.Softmax(dim=1))
+    model = nn.Sequential(model, nn.Linear(512, args.num_classes, bias=False))
 
-#model = nn.Sequential(*model)
 model = model.cuda()
-
-
 
 optimizer = torch.optim.SGD(
     model.parameters(),
@@ -77,7 +74,7 @@ optimizer = torch.optim.SGD(
     momentum=0.9,
     weight_decay=1e-4
 )
-scheduler = lr_scheduler.MultiStepLR(optimizer, milestones=[30, 60, 80], gamma=0.1)
+scheduler = lr_scheduler.MultiStepLR(optimizer, milestones=[60, 90], gamma=0.1)
 logger.info("Model details:")
 logger.info(model)
 logger.info("Optimizer details:")
@@ -92,7 +89,12 @@ def main():
 
     start_time = time.time()
 
-    train_loader, val_loader = datasets.cifar10(path=join(expanduser("~"), ".torch", "data"), bs=args.bs)
+    if args.num_classes == 10:
+        train_loader, val_loader = datasets.cifar10(path=join(expanduser("~"), ".torch", "data"), bs=args.bs)
+    elif args.num_classes == 100:
+        train_loader, val_loader = datasets.cifar100(path=join(expanduser("~"), ".torch", "data"), bs=args.bs)
+    else:
+        raise ValueError("invalid num-classes: %d"%args.num_classes)
 
     logger.info("Data loading done, %.3f sec elapsed." % (time.time() - start_time))
 
@@ -132,7 +134,7 @@ def train(train_loader, epoch):
         data = data.cuda()
 
         output = model(data)
-        loss = F.nll_loss(torch.log(output), target)
+        loss = criterion(output, target)
 
         # measure accuracy and record loss
         acc1, acc5 = accuracy(output, target, topk=(1, 5))
@@ -178,7 +180,7 @@ def validate(val_loader):
             data = data.cuda()
             # compute output
             output = model(data)
-            loss = F.nll_loss(torch.log(output), target)
+            loss = criterion(output, target)
             # measure accuracy and record loss
             acc1, acc5 = accuracy(output, target, topk=(1, 5))
             losses.update(loss.item(), data.size(0))
