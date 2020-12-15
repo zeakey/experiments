@@ -47,6 +47,8 @@ parser.add_argument('--weight-decay', '--wd', default=1e-4, type=float,
 parser.add_argument('--tmp', help='tmp folder', default="work_dir")
 parser.add_argument('--benchmark', dest='benchmark', action="store_true")
 parser.add_argument('--use-forest', dest='use_forest', action="store_true")
+parser.add_argument('--tree-depth', type=int, default=5)
+parser.add_argument('--num-trees', type=int, default=5)
 
 
 args = parser.parse_args()
@@ -59,7 +61,8 @@ writer = SummaryWriter(log_dir=args.tmp)
 
 model = resnetv1_cifar.resnet18()
 if args.use_forest:
-    model = nn.Sequential(model, Forest(in_features=512, num_trees=12, tree_depth=5, num_classes=10))
+    model = nn.Sequential(model, Forest(in_features=512, num_trees=args.num_trees,
+        tree_depth=args.num_trees, num_classes=10))
 else:
     model = nn.Sequential(model, nn.Linear(512, 100), nn.Softmax(dim=1))
 
