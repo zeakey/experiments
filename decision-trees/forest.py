@@ -6,7 +6,7 @@ from tree import Tree
 import numpy as np
 
 class Forest(nn.Module):
-    def __init__(self, in_features, num_trees, tree_depth, num_classes):
+    def __init__(self, in_features, num_trees, tree_depth, num_classes, norm=True):
         super(Forest, self).__init__()
 
         self.in_features = in_features
@@ -26,7 +26,7 @@ class Forest(nn.Module):
         for i in range(self.num_trees):
 
             self.feature_mask[:, i] = torch.from_numpy(np.random.choice(self.in_features, self.num_split_per_tree))
-            self.trees.append(Tree(tree_depth, num_classes))
+            self.trees.append(Tree(tree_depth, num_classes, norm=norm))
     
     def forward(self, x):
 

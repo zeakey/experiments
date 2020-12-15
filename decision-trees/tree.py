@@ -5,9 +5,9 @@ from torch.nn.parameter import Parameter
 
 class Tree(nn.Module):
 
-    def __init__(self, depth, num_classes=10):
+    def __init__(self, depth, num_classes=10, norm=True):
         super(Tree, self).__init__()
-        
+        self.norm = norm
         self.depth = depth
         self.num_classes = num_classes
 
@@ -42,5 +42,8 @@ class Tree(nn.Module):
 
         tmp = tmp.view(bs, self.num_leaf)
 
-        return torch.mm(tmp, F.softmax(self.pi, dim=1))
+        if self.norm:
+            return torch.mm(tmp, F.softmax(self.pi, dim=1))
+        else:
+            return torch.mm(tmp, self.pi)
 
